@@ -1,0 +1,303 @@
+========================================================================
+  zh_OS 命令列表
+========================================================================
+
+【零】登录
+
+  启动后先出现登录界面:
+
+      zh_OS login
+
+      login: _
+      password: _          (输入时显示 * 号, 不显示明文)
+
+  默认账户:
+
+      root  / root        超级用户, uid 0, 家目录 /root
+      guest / guest       普通用户, uid 1000, 家目录 /home/guest
+
+  连续 3 次输错会锁定, 只能重启虚拟机。
+  登录后请立即用 passwd 修改默认密码。
+
+  提示符:
+
+      root@zh_OS:/root$            root 用红色
+      alice@zh_OS:/home/alice$     普通用户用绿色
+
+
+【一】日常使用（双击运行）
+
+  make_image.bat
+      一键制作镜像。编译引导程序 + 内核，生成：
+        build\zh_OS.img    QEMU 用的 raw 镜像
+        build\zh_OS.vdi    VirtualBox 原生格式
+        build\zh_OS.vmdk   VMware / VirtualBox 通用格式
+        build\kernel.elf   带符号内核，用于调试
+
+      注意: 每次都会生成全新的空镜像，账户会被重置。
+
+  run_vm.bat
+      用 QEMU 启动虚拟机。若 build\zh_OS.img 不存在会自动先制作。
+
+  vbox.bat
+      创建（或更新）名为 zh_OS 的 VirtualBox 虚拟机，挂载 build\zh_OS.vdi，
+      然后打开 VirtualBox 管理器。双击 zh_OS 即可启动。
+
+      vbox.bat run        创建/更新后直接启动虚拟机
+      vbox.bat recreate   重建镜像 + 删除旧虚拟机重新创建
+                          （旧虚拟机报 inaccessible 时用这个）
+
+      重要: VirtualBox 不能直接挂载 raw .img（会判定为软盘而拒绝），
+            必须使用 .vdi 或 .vmdk。
+
+  build.bat
+      只编译，不打包镜像。适合配合 gdb / objdump 调试。
+
+
+【二】参数形式
+
+  make_image.bat debug
+      调试构建：-O0 -g，便于单步。
+
+  make_image.bat clean
+      删除 build 目录。
+
+  build.bat debug
+      只做调试构建。
+
+  build.bat clean
+      删除 build 目录。
+
+  run_vm.bat debug
+      启动虚拟机并记录 QEMU 中断/CPU 日志：
+        build\logs\qemu-debug.log
+        build\logs\serial.log
+      注意：debug 模式带 -no-reboot 参数，内核执行 reboot 时窗口会直接关闭。
+            需要测试重启功能请用普通模式 run_vm.bat。
+
+  run_vm.bat serial
+      无窗口启动，串口输出直接显示在当前控制台。按 Ctrl+C 退出。
+
+  run_vm.bat build
+      先重新制作镜像，再启动。
+
+
+【三】账户相关命令
+
+  whoami              显示当前用户名
+  id                  显示 uid / gid / 所属组
+  users               列出所有账户（名字、uid、gid、家目录）
+  passwd              修改自己的密码（先验证旧密码，再输入两次新密码）
+  passwd USER         重置其他用户的密码            【仅 root】
+  su [USER]           切换到其他用户，默认切到 root（需输入目标用户密码）
+  logout / exit       登出，回到登录界面
+  useradd USER        创建用户，自动分配 uid 并交互式设置密码  【仅 root】
+  userdel USER        删除用户（不能删 root，不能删自己）      【仅 root】
+
+  口令策略（创建/修改时检查）:
+
+      至少 4 个字符，最多 64 个
+      必须同时包含字母和数字
+      不能与用户名相同
+
+  存储安全:
+
+      口令不存明文，只存 SHA-256 摘要
+      每个用户 16 字节随机盐
+      摘要迭代 1000 轮
+      账户库双槽交替写入磁盘（LBA 4096 / 4097），掉电不会全丢
+      每次 boot 时自动从磁盘加载，所以账户重启后依然存在
+
+
+【四】其他内核 shell 命令（所有用户）
+
+  help / ?            显示全部命令（root 专用命令标注 [root]）
+  clear / cls         清屏
+  about               关于 zh_OS
+  version / ver       版本号、编译时间、账户存储位置
+  mem                 物理内存总量 / 空闲 / 已用，以及分页状态
+  memmap              打印 BIOS E820 内存布局表
+  uptime              系统已运行毫秒数与 tick 数
+  echo TEXT           回显文本
+  cpuid               CPU 厂商、家族型号、特性标志
+  history             最近 8 条命令
+  reboot              重启虚拟机                        【仅 root】
+  halt / shutdown     停止 CPU                          【仅 root】
+
+  非 root 用户执行 root 命令会得到:
+
+      permission denied: useradd requires root
+
+
+【五】准备工具链
+
+  powershell -NoProfile -ExecutionPolicy Bypass -File scripts\get-tools.ps1
+      下载 NASM 到 tools\nasm（不修改系统 PATH），并检查 LLVM 与 QEMU。
+
+  也可手动安装：
+      winget install LLVM.LLVM
+      winget install SoftwareFreedomConservancy.QEMU
+
+  工具查找顺序：
+      环境变量 CLANG_PATH / NASM_PATH / QEMU_PATH
+      -> 项目 tools 目录
+      -> 系统 PATH
+      -> 常见安装目录（C:\Program Files\LLVM、C:\Program Files\qemu 等）
+
+
+【六】单独运行构建脚本
+
+  powershell -File scripts\find-tools.ps1
+      显示并输出 JSON 形式的工具路径。
+
+  powershell -File scripts\check-tools.ps1
+      检查构建工具是否齐全，缺少时退出码为 1。
+
+  powershell -File scripts\build.ps1 -Config release
+      编译内核，输出到 build\kernel.elf 和 build\kernel.bin。
+
+  powershell -File scripts\mkimage.ps1 -Boot build\boot.bin ^
+      -Stage2 build\stage2.bin -Kernel build\kernel.bin ^
+      -Output build\zh_OS.img -SizeMB 32
+      把三个二进制拼成可启动镜像。
+
+  powershell -File scripts\mkdisks.ps1
+      build\zh_OS.img -> build\zh_OS.vdi + build\zh_OS.vmdk。
+
+  powershell -File scripts\vbox-create.ps1
+      创建/更新 VirtualBox 虚拟机。参数:
+        -Name zh_OS        虚拟机名
+        -Memory 128        内存 MiB
+        -Recreate          先删除旧虚拟机
+        -Start             创建后立即启动
+
+  powershell -File scripts\get-tool-path.ps1 qemu
+      输出单个工具路径（qemu / qemu-img / nasm / clang / lld / objcopy）。
+
+  powershell -File scripts\ppm2png.ps1 -Source a.ppm -Destination a.png
+      QEMU 截图格式转换（写文档时用）。
+
+
+【七】VirtualBox 使用与排查
+
+  一键方式:
+      vbox.bat
+      然后双击 zh_OS 虚拟机启动。
+
+  手动创建:
+      1. 新建 -> 名称 zh_OS, 类型 Other, 版本 Other/Unknown (32-bit)
+      2. 内存 128 MiB
+      3. 硬盘 -> 使用已有的虚拟硬盘文件 -> build\zh_OS.vdi
+      4. 设置 -> 系统 -> 启动顺序 只勾选"硬盘"
+
+  启动报 VT-x is not available (VERR_VMX_NO_VMX):
+      原因: VirtualBox 拿不到 CPU 虚拟化能力。
+
+      情况 A: BIOS 没开虚拟化
+         重启进 BIOS, 打开 Intel VT-x / Intel Virtualization Technology
+         (AMD 平台找 SVM Mode)。
+
+      情况 B: Windows 的 Hyper-V / VBS 占用了虚拟化层
+         症状: 任务管理器显示"虚拟化: 已启用", 但 VirtualBox 仍报错,
+               并伴随 WHvCapabilityCodeHypervisorPresent is FALSE。
+
+         原因: Windows 已用 Hyper-V 层启动 (VBS / 内存完整性 / WSL2 /
+               Docker 都会这样), 但"Windows 虚拟机监控程序平台"(WHP)
+               这个让第三方虚拟机软件借用 Hyper-V 的功能没开启。
+
+         解决 (用【管理员】身份打开 PowerShell, 然后重启):
+
+             Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform -All
+
+         如果你完全不用 Hyper-V / WSL2 / Docker, 也可以彻底关掉:
+
+             bcdedit /set hypervisorlaunchtype off
+
+         两者任选其一, 改完必须重启。
+
+  报 inaccessible / UUID does not match:
+      重新构建后 VDI 的 UUID 变了。执行:
+          vbox.bat recreate
+
+  报 can't be used as the requested device type (HDD, detected floppy):
+      你直接挂了 build\zh_OS.img。改用 build\zh_OS.vdi。
+
+  黑屏卡在 bootloader:
+      检查启动顺序里"硬盘"是否排第一, 以及有没有挂多余的光驱。
+
+
+【八】直接使用 QEMU
+
+  启动：
+      qemu-system-i386 -drive file=build/zh_OS.img,format=raw,if=ide,index=0 -m 128
+
+  带调试端口（配合 gdb）：
+      qemu-system-i386 -drive file=build/zh_OS.img,format=raw,if=ide,index=0 -m 128 -s -S
+
+  只用串口看输出（无窗口）：
+      qemu-system-i386 -drive file=build/zh_OS.img,format=raw,if=ide,index=0 -m 128 -display none -serial stdio
+
+
+【九】镜像中的布局
+
+  LBA 0        引导扇区（512 字节，含 0x55AA 签名和分区表）
+  LBA 1..8     第二阶段引导（4 KiB，加载到 0x7E00）
+  LBA 2048     内核平铺二进制（加载到 0x10000）
+  LBA 4096     账户库槽 A（512 字节）
+  LBA 4097     账户库槽 B（512 字节）
+
+  账户库槽里有 magic / 版本 / 序号 / CRC32 / 用户数组。
+  每次保存写入"非当前"的槽，序号 +1，下次启动取序号大的那个。
+
+
+【十】常见问题
+
+  Q: 提示找不到 clang / ld.lld
+  A: 安装 LLVM：winget install LLVM.LLVM
+
+  Q: 提示找不到 NASM
+  A: 运行 scripts\get-tools.ps1，或手动装好并设置 NASM_PATH
+
+  Q: 提示找不到 QEMU
+  A: winget install SoftwareFreedomConservancy.QEMU，或从 qemu.org 下载
+
+  Q: 忘记 root 密码了
+  A: 重新运行 make_image.bat，会生成带默认 root/root 的新镜像
+     （账户库也会被重置）。也可以删除 build\zh_OS.img 后重新制作。
+
+  Q: 新建的账户重启后还在吗
+  A: 在。账户写在磁盘 LBA 4096/4097，只要不重建镜像就一直在。
+
+  Q: 为什么重建镜像后账户没了
+  A: make_image.bat 每次生成全新的空镜像。想保留账户，请复用旧的 .img 文件。
+
+  Q: 启动时提示 no writable disk, starting as root without login
+  A: 磁盘不可写（例如从只读介质启动），退化为免登录单用户模式。
+     账户系统本身仍可用，但改动不会保存。
+
+  Q: 登录一直失败
+  A: 检查 Caps Lock。连续 3 次失败会锁定，重启虚拟机再试。
+
+  Q: VirtualBox 点启动就报 VT-x is not available
+  A: 见【七】。多数是 Windows Hyper-V / VBS 占着虚拟化层,
+     用管理员 PowerShell 执行:
+         Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform -All
+     然后重启。
+
+  Q: VirtualBox 里看不到 build\zh_OS.img 或挂载被拒
+  A: VirtualBox 不支持 raw .img, 请用 build\zh_OS.vdi。
+
+  Q: 重新构建后 VirtualBox 说磁盘 inaccessible
+  A: VDI 的 UUID 变了。执行 vbox.bat recreate。
+
+  Q: 虚拟机黑屏没有输出
+  A: 用 run_vm.bat debug 启动，然后查看 build\logs\serial.log
+     与 build\logs\qemu-debug.log
+
+  Q: 输入命令没反应
+  A: 先用鼠标点击一下虚拟机窗口，让键盘焦点进入虚拟机
+
+  Q: 项目路径含中文会不会有问题
+  A: 构建脚本内部使用相对路径调用工具，已验证可正常工作
+
+========================================================================
