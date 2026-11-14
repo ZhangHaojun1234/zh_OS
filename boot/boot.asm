@@ -1,94 +1,169 @@
-; ---------------------------------------------------------------------------
-; zh_OS 第一阶段引导 (MBR, 512 字节)
+; ============================================================================
+; zh_OS 0.1beta (x86_64)
+; File:    boot/boot.asm
+; Version: 0.1beta
+; Brief:   Multiboot2 头、32->64 位两段式引导入口、临时页表与 16KB 栈。
+; ============================================================================
+
+; ============================================================================
+; boot/boot.asm - zh_OS 引导入口（GRUB2 + Multiboot2 -> x86_64）
 ;
-; 职责很轻: 只负责把第二阶段引导程序从 LBA 1 读到 0x7E00 然后跳过去。
-; 剩下的工作 (E820、A20、读内核、进保护模式) 都由 stage2 完成。
-;
-; 镜像布局 (make_image.bat 生成):
-;   LBA 0        本 MBR
-;   LBA 1 .. 8   stage2 (4 KiB, 加载到 0x7E00)
-;   LBA 2048     内核平铺二进制 (加载到 0x10000)
+; 关于执行状态（重要）：
+;   Multiboot2 规范要求 bootloader 以 32 位保护模式进入 OS 映像。
+;   因此本文件是一段"两段式"入口：
+;     1) _start        32 位保护模式：建临时页表 -> 开 PAE/LME/分页 -> 远跳
+;     2) long_mode_entry  64 位长模式：设置段寄存器与栈，调用 kernel_main
+;   进入长模式之后，GDT 与页表由内核（kernel/gdt.c、kernel/paging.c）重建。
+; ============================================================================
+
+MB2_MAGIC        equ 0xE85250D6
+MB2_ARCH_I386    equ 0
+ENTRY_STACK_SIZE equ 16 * 1024
+
 ; ---------------------------------------------------------------------------
+; Multiboot2 头
+; ---------------------------------------------------------------------------
+section .multiboot
+align 8
+mb2_header_start:
+    dd MB2_MAGIC
+    dd MB2_ARCH_I386
+    dd mb2_header_end - mb2_header_start
+    dd -(MB2_MAGIC + MB2_ARCH_I386 + (mb2_header_end - mb2_header_start))
+align 8
+    dw 0                        ; 结束标签 type = 0
+    dw 0                        ; flags
+    dd 8                        ; size
+mb2_header_end:
 
-        bits 16
-        org 0x7C00
+; ---------------------------------------------------------------------------
+; 32 位入口：建立进入长模式所需的最小环境
+; ---------------------------------------------------------------------------
+section .text
+bits 32
+global _start
+extern kernel_main
 
-%define STAGE2_LBA      1
-%define STAGE2_SECTORS  8
-%define STAGE2_SEG      0x07E0          ; 0x07E0:0000 = 0x7E00
+_start:
+    cli
+    ; 保存 GRUB 传入的 Multiboot2 信息（eax = magic，ebx = info 结构地址）
+    mov [mb2_magic], eax
+    mov [mb2_info], ebx
 
-start:
-        cli
-        xor ax, ax
-        mov ds, ax
-        mov es, ax
-        mov ss, ax
-        mov sp, 0x7C00
-        sti
+    ; 清零临时页表（.bss 由 GRUB 载入，这里显式清零更稳妥）
+    mov edi, boot_pml4
+    xor eax, eax
+    mov ecx, (3 * 4096) / 4
+    rep stosd
 
-        mov [drive], dl
+    mov esp, boot_stack_top
+    xor ebp, ebp
 
-        mov ah, 0x41                    ; 检查 INT 13h 扩展读
-        mov bx, 0x55AA
-        int 0x13
-        jc .no_lba
-        cmp bx, 0xAA55
-        jne .no_lba
-        test cl, 1
-        jz .no_lba
+    ; PML4[0] -> PDPT
+    mov eax, boot_pdpt
+    or eax, 0x003               ; Present | Writable
+    mov dword [boot_pml4], eax
+    mov dword [boot_pml4 + 4], 0
 
-        mov word [dap_count], STAGE2_SECTORS
-        mov word [dap_off], 0
-        mov word [dap_seg], STAGE2_SEG
-        mov dword [dap_lba], STAGE2_LBA
-        mov si, dap
-        mov dl, [drive]
-        mov ah, 0x42
-        int 0x13
-        jc .fail
+    ; PDPT[0] -> PD
+    mov eax, boot_pd
+    or eax, 0x003
+    mov dword [boot_pdpt], eax
+    mov dword [boot_pdpt + 4], 0
 
-        mov dl, [drive]
-        jmp 0x0000:0x7E00
+    ; 页目录：512 个 2MB 大页，恒等映射低 1GB（含 0xB8000 显存）
+    mov edi, boot_pd
+    mov eax, 0x83               ; Present | Writable | PageSize(2MB)
+    mov ecx, 512
+.fill_pd:
+    mov dword [edi], eax
+    mov dword [edi + 4], 0
+    add eax, 0x200000
+    add edi, 8
+    loop .fill_pd
 
-.no_lba:
-.fail:
-        mov si, msg_err
-.puts:
-        lodsb
-        test al, al
-        jz .hang
-        mov ah, 0x0E
-        mov bx, 0x0007
-        int 0x10
-        jmp .puts
+    ; CR4.PAE = 1
+    mov eax, cr4
+    or eax, 1 << 5
+    mov cr4, eax
+
+    ; CR3 = PML4 物理地址
+    mov eax, boot_pml4
+    mov cr3, eax
+
+    ; EFER.LME = 1
+    mov ecx, 0xC0000080
+    rdmsr
+    or eax, 1 << 8
+    wrmsr
+
+    ; CR0: PG | WP | PE
+    mov eax, cr0
+    or eax, (1 << 31) | (1 << 16) | 1
+    mov cr0, eax
+
+    lgdt [boot_gdt_ptr32]
+    jmp 0x08:long_mode_entry    ; 远跳转刷新 CS，进入 64 位
+
+; ---------------------------------------------------------------------------
+; 64 位长模式入口
+; ---------------------------------------------------------------------------
+bits 64
+long_mode_entry:
+    mov ax, 0x10
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+    mov ss, ax
+
+    lea rsp, [rel boot_stack_top]
+    xor rbp, rbp
+
+    mov edi, dword [rel mb2_magic]
+    mov esi, dword [rel mb2_info]
+    call kernel_main
+
 .hang:
-        hlt
-        jmp .hang
-
-msg_err: db "zh_OS: disk read error", 13, 10, 0
-drive:   db 0
-
-        align 4
-dap:
-        db 0x10, 0
-dap_count: dw STAGE2_SECTORS
-dap_off:   dw 0
-dap_seg:   dw STAGE2_SEG
-dap_lba:   dq STAGE2_LBA
+    cli
+    hlt
+    jmp .hang
 
 ; ---------------------------------------------------------------------------
-; 分区表 (偏移 0x1BE) + 引导签名
+; 进入长模式用的临时 GDT（内核启动后由 kernel/gdt.c 重建）
 ; ---------------------------------------------------------------------------
-        times 0x1BE - ($ - $$) db 0
+section .rodata
+align 8
+boot_gdt:
+    dq 0x0000000000000000       ; 0x00 空描述符
+    dq 0x00AF9A000000FFFF       ; 0x08 64 位内核代码段
+    dq 0x00AF92000000FFFF       ; 0x10 内核数据段
+boot_gdt_end:
 
-partition_table:
-        db 0x80                      ; 活动分区
-        db 0x00, 0x00, 0x00          ; 起始 CHS
-        db 0x83                      ; 类型: Linux
-        db 0x00, 0x00, 0x00          ; 结束 CHS
-        dd 2048                      ; 起始 LBA
-        dd 6144                      ; 扇区数
+align 8
+boot_gdt_ptr32:
+    dw boot_gdt_end - boot_gdt - 1
+    dd boot_gdt
 
-        times 48 db 0
+; ---------------------------------------------------------------------------
+; .bss：临时页表 + 16KB 内核栈 + Multiboot2 参数
+; ---------------------------------------------------------------------------
+section .bss
+align 4096
+boot_pml4:
+    resb 4096
+boot_pdpt:
+    resb 4096
+boot_pd:
+    resb 4096
 
-        dw 0xAA55
+align 16
+boot_stack_bottom:
+    resb ENTRY_STACK_SIZE
+boot_stack_top:
+
+align 4
+mb2_magic:
+    resd 1
+mb2_info:
+    resd 1

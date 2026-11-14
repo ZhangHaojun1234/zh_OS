@@ -1,0 +1,187 @@
+================================================================================
+ zh_OS 0.1beta (x86_64) 命令说明
+================================================================================
+ 文件   : COMMANDS.txt
+ 版本   : 0.1beta
+ 适用范围: 内置 Shell 命令速查 + 构建/运行命令
+ 命令来源: shell/commands.c 的 shell_command_table（当前共 18 条）
+ 说明   : 本文件只是文档，不参与编译；改动源码后仍须重新执行 ./build.sh
+================================================================================
+
+一、登录与提示符
+--------------------------------------------------------------------------------
+ 内置账户:
+   root   uid=0    gid=0    /root      管理员
+   zh     uid=1000 gid=1000 /home/zh   普通用户
+ 两者初始密码都是 zh；useradd 新建账户的初始密码同样是 zh。
+ 账户表全部在内存中，重启 QEMU 后新增账户与改过的密码都会复位。
+
+ 彩色提示符:
+   [zh@zh_OS ~]$      普通用户
+   [root@zh_OS ~]#    root
+ 分段颜色（Linux 红 / 黄 / 绿三色分级 + 默认浅灰）:
+           用户名 root 红 / 普通绿，@ 浅灰，zh_OS 黄，~ 绿，
+           结尾 # 或 $ 与用户名同色，方括号与空格浅灰。
+
+ 键盘: 可打印 ASCII、左右 Shift、CapsLock、退格、回车。
+ 密码输入回显 * ，不显示明文。
+
+
+二、内置命令速查表（18 条）
+--------------------------------------------------------------------------------
+ 序号  命令       参数              权限        作用
+ ----  ---------  ----------------  ----------  ------------------------------
+  1    help                       所有用户    彩色列出全部命令与说明
+  2    clear                      所有用户    清屏
+  3    echo       [args...]       所有用户    绿输出参数（空格连接）
+  4    uname                      所有用户    输出 zh_OS 0.1beta (x86_64)
+  5    whoami                     所有用户    输出当前用户名
+  6    login                      所有用户    在当前 Shell 内重新登录
+  7    logout                     所有用户    退出 Shell 回到登录界面
+  8    su         [user]          需目标密码  切换用户，缺省 root
+  9    useradd    <name>          仅 root     新建账户（默认密码 zh）
+ 10    passwd     [user]          见下方说明  修改密码
+ 11    color                      所有用户    一屏显示 16 色调色板
+ 12    reboot                     所有用户    复位 CPU 重新启动
+ 13    shutdown                   所有用户    打印提示后停机
+ 14    meminfo    [test]          所有用户    显示内核堆用量 / 可选自测
+ 15    uptime                     所有用户    显示开机时长
+ 16    date                       所有用户    显示 RTC 日期与时间
+ 17    dmesg      [test]          所有用户    显示内核日志环 / 可选灌满自测
+ 18    cpuinfo                    所有用户    显示 CPU 厂商 / 型号 / 特性
+
+
+三、命令详解
+--------------------------------------------------------------------------------
+[1] help
+    遍历 shell_command_table 打印命令名 + 英文说明，命令名绿、说明浅灰，
+    末尾黄字提示 root 专属命令。新增命令只要追加到命令表，help 会自动带上。
+
+[2] clear
+    vga_clear() 清屏为浅灰字/黑底，光标回到左上角。
+
+[3] echo [args...]
+    把参数用单个空格连接后以绿输出；不带参数只输出一个空行。
+
+[4] uname
+    输出统一版本号字符串 "zh_OS 0.1beta (x86_64)"（亮绿）。
+    该字符串来自 kernel/version.h，启动横幅 / 登录横幅 / GRUB 菜单同源。
+
+[5] whoami
+    输出当前登录用户名（亮绿）。未登录会话时输出红色错误。
+
+[6] login
+    在当前 Shell 内重走 login_screen()：清屏、绘制登录横幅、重新认证；
+    成功后返回 Shell，提示符按新用户重新上色。
+
+[7] logout
+    打印 logout 后让 shell_run() 返回，由 kernel_main 重新进入登录流程。
+
+[8] su [user]
+    缺省切到 root。提示 Password: 并要求输入目标账户密码，
+    认证成功打印 su: switched to <user>，下一轮提示符立即变色；
+    失败打印红色 su: Authentication failure.
+
+[9] useradd <name>
+    仅 root 可用，普通用户执行会打印红色 Permission denied.
+    uid/gid = 1000 + 当前账户数（第一个新账户是 1002），
+    home 自动生成 /home/<name>，shell 为 /bin/zhsh，初始密码 zh。
+    成功提示含 uid 与 default password: zh。
+
+[10] passwd [user]
+    不带参数改自己的密码；root 可用 passwd <user> 改他人。
+    两次输入 New password: / Retype new password:（均回显 *），
+    一致才更新；普通用户指定他人时打印红色 Permission denied.
+    成功后绿色提示，并注明 RAM only, reset on reboot。
+
+[11] color
+    8 行 x 2 列一次展示 16 种前景色，含编号、色名与 ######## 色块；
+    黑色格改用浅灰背景以便可见。
+
+[12] reboot
+    打印黄色 Rebooting zh_OS ... 后向 8042 键盘控制器端口 0x64 写 0xFE
+    复位 CPU；QEMU 加 -no-reboot 时虚拟机会直接退出。
+
+[13] shutdown
+    打印黄色 System halted. 后 cli; hlt 停机。
+    尚无 ACPI/APM 电源管理，不会真正断电，需在 QEMU 终端按 Ctrl+C 退出。
+
+[14] meminfo [test]
+    无参数: 绿标题 + 浅灰数据，显示 pool / used / free / blocks，
+            初始为 used=0、free=2097152（2MB）；剩余 < 10% 时追加亮黄警告。
+    带 test : 跑一组 kmalloc/kzalloc/kfree 自测，打印各阶段 used/free/blocks，
+            验证相邻块合并、重复 free、越界指针与超大分配的亮红报错，
+            最后把堆还原为初始状态。
+
+[15] uptime
+    输出 "up X hours, Y minutes, Z seconds"，文字标签黄、数字绿。
+    秒数来自 PIT 100Hz 的 pit_ticks / 100，随运行时间增长。
+
+[16] date
+    输出 "YYYY-MM-DD HH:MM:SS"，日期亮黄、时间绿。
+    读取 CMOS RTC（端口 0x70/0x71），处理 BCD/二进制模式与 12/24 小时位。
+    不处理时区、夏令时、闰秒；RTC 通常是 QEMU 固件 UTC 时间。
+
+[17] dmesg [test]
+    无参数: 亮青标题 "=== kernel log ===" + 按最旧→最新打印内核日志环，
+            每行含 tick（亮青）与内容（浅灰）；启动日志 tick 多为 0，
+            运行期日志带 PIT tick。环满 128 条后覆盖最旧。
+    带 test : 写入 139 条编号日志 + 1 条格式化自测（%s/%d/%u/%x/%c/%%），
+            共 140 条灌满 128 槽，验证覆盖顺序与回绕正确。
+
+[18] cpuinfo
+    亮青标题 "=== CPU Information ==="，依次输出:
+      Vendor ID  —— 厂商字符串（GenuineIntel / AuthenticAMD 等，黄字），来自 leaf 0
+      Brand String —— 型号（如 QEMU Virtual CPU version 2.5+，浅灰）；
+            若 CPU 不支持扩展 leaf 0x80000004 则黄字 "Brand string not supported"
+      Family / Model / Stepping —— 按 Intel SDM 公式解析 leaf 1 的 EAX（亮绿）
+      Features  —— 11 项特性 4 个一行对齐：FPU/MMX/SSE/SSE2/SSE3/SSSE3/SSE4.1/SSE4.2/
+            AVX/AES/64BIT；支持的亮绿、不支持的深灰
+      Logical processors —— leaf 1 EBX[23:16]，0 时按 1 计（亮青）
+    全部数值用自实现整型转十进制打印，不链接 libc。
+
+ 其它提示:
+    未知命令 -> 亮红 "zh_OS: command not found: <cmd>"
+                亮黄 "Type 'help' for a list of commands."
+    权限不足 -> 亮红 "Permission denied."
+
+
+四、构建与运行命令（WSL2 Ubuntu，不生成任何 .bat）
+--------------------------------------------------------------------------------
+ 在 Windows 11 以管理员身份打开 PowerShell，只做一次:
+   wsl --install -d Ubuntu
+
+ 进入 WSL 后:
+   cd ~/zh_OS
+   ./setup.sh                 # 首次：安装依赖并写入 env.mode
+   ./check.sh                 # 只读体检：打印 gcc/nasm/grub-mkrescue/xorriso/qemu 版本
+   ./build.sh                 # 编译内核并用 grub-mkrescue 生成 zh_OS-0.1beta.iso
+   qemu-system-x86_64 -cdrom zh_OS-0.1beta.iso -m 128
+
+ 校验新代码是否编进内核:
+   strings build/zh_OS.elf | grep -E 'Welcome back|built-in commands|uptime'
+
+ 把 ISO 复制到 Windows 桌面（供 VirtualBox / VMware 使用）:
+   cp zh_OS-0.1beta.iso /mnt/c/Users/你的用户名/Desktop/
+
+ 可选编译开关:
+   ZH_VGA_SELFTEST=1 ./build.sh    # 编入启动时的 16 色前景自检（默认关闭）
+
+ 常用验收流程（QEMU 内）:
+   login: zh / Password: zh
+   help / color / uname / whoami / uptime / date / meminfo / dmesg / cpuinfo
+   useradd test                 -> 红色 Permission denied.
+   su root / Password: zh       -> 提示符变红 #
+   useradd test                 -> 绿色创建成功
+   passwd                       -> 改自己的密码
+   logout -> login: test / Password: zh -> 绿色 Welcome back, test!
+
+
+五、注意事项
+--------------------------------------------------------------------------------
+ * 改动任何源码后必须重新执行 ./build.sh，旧 ISO 不会自动更新。
+ * 账户表、堆、PIT 计数全在内存中，重启后复位；没有文件系统与磁盘持久化。
+ * 没有用户态、进程、SMP、定时器时间戳之外的调度；Shell 运行在 ring 0。
+ * VGA 文本模式为 CP437，屏幕上的内核输出必须是 ASCII；中文只出现在注释与文档中。
+ * 已知限制的完整列表见 README.md「已知限制」一节。
+================================================================================
