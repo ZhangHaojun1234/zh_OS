@@ -4,7 +4,7 @@
  文件   : COMMANDS.txt
  版本   : 0.1beta
  适用范围: 内置 Shell 命令速查 + 构建/运行命令
- 命令来源: shell/commands.c 的 shell_command_table（当前共 18 条）
+ 命令来源: shell/commands.c 的 shell_command_table（当前共 29 条）
  说明   : 本文件只是文档，不参与编译；改动源码后仍须重新执行 ./build.sh
 ================================================================================
 
@@ -14,7 +14,14 @@
    root   uid=0    gid=0    /root      管理员
    zh     uid=1000 gid=1000 /home/zh   普通用户
  两者初始密码都是 zh；useradd 新建账户的初始密码同样是 zh。
- 账户表全部在内存中，重启 QEMU 后新增账户与改过的密码都会复位。
+
+ 账户持久化（B 组第 2 个功能）:
+   账户表默认在内存中，重启即复位。若 QEMU 挂了一块可写磁盘
+   （-drive file=disk.img,format=raw,if=ide），启动时 users_load() 会从
+   LBA 200-207（8 扇区 / 4KB）读回账户表，useradd / passwd 成功后
+   users_save() 立即写回，因此新增账户与改过的密码可跨重启保留。
+   无磁盘（只 -cdrom 启动）时走内存态，useradd / passwd 会追加一行黄字
+   [warn] disk read-only, changes lost on reboot。
 
  彩色提示符:
    [zh@zh_OS ~]$      普通用户
@@ -22,12 +29,13 @@
  分段颜色（Linux 红 / 黄 / 绿三色分级 + 默认浅灰）:
            用户名 root 红 / 普通绿，@ 浅灰，zh_OS 黄，~ 绿，
            结尾 # 或 $ 与用户名同色，方括号与空格浅灰。
+   ~ 处显示的是 ramfs 的当前工作目录（cd 后立即变化）。
 
- 键盘: 可打印 ASCII、左右 Shift、CapsLock、退格、回车。
+ 键盘: 可打印 ASCII、左右 Shift、CapsLock、退格、回车，另有上/下箭头召回历史。
  密码输入回显 * ，不显示明文。
 
 
-二、内置命令速查表（18 条）
+二、内置命令速查表（29 条）
 --------------------------------------------------------------------------------
  序号  命令       参数              权限        作用
  ----  ---------  ----------------  ----------  ------------------------------
@@ -49,6 +57,20 @@
  16    date                       所有用户    显示 RTC 日期与时间
  17    dmesg      [test]          所有用户    显示内核日志环 / 可选灌满自测
  18    cpuinfo                    所有用户    显示 CPU 厂商 / 型号 / 特性
+ ----  ramfs 内存文件系统（B 组第 1 个功能）----
+ 19    ls         [path]          所有用户    列目录（目录亮蓝带 /，文件浅灰）
+ 20    cd         <path>          所有用户    切换当前目录
+ 21    pwd                        所有用户    打印当前目录绝对路径
+ 22    cat        <file>          所有用户    打印文件内容（>4KB 截断）
+ 23    mkdir      <path>          见下方说明  新建目录
+ 24    touch      <path>          见下方说明  新建空文件
+ 25    rm         <path>          见下方说明  删除文件或空目录
+ ----  ATA 磁盘（B 组第 2 个功能）----
+ 26    diskinfo                   所有用户    显示 ATA 主盘与持久化扇区信息
+ ----  FAT16 只读挂载（B 组第 3 个功能）----
+ 27    fatmount                   所有用户    挂载主通道第二块盘上的 FAT16
+ 28    fatls      [path]          所有用户    列 FAT16 目录
+ 29    fatcat     <path>          所有用户    打印 FAT16 文件（>4KB 截断）
 
 
 三、命令详解
@@ -86,13 +108,17 @@
     仅 root 可用，普通用户执行会打印红色 Permission denied.
     uid/gid = 1000 + 当前账户数（第一个新账户是 1002），
     home 自动生成 /home/<name>，shell 为 /bin/zhsh，初始密码 zh。
-    成功提示含 uid 与 default password: zh。
+    成功提示含 uid 与 default password: zh；有可写磁盘时紧接着落盘，
+    无磁盘时追加黄字 [warn] disk read-only, changes lost on reboot。
 
 [10] passwd [user]
     不带参数改自己的密码；root 可用 passwd <user> 改他人。
     两次输入 New password: / Retype new password:（均回显 *），
     一致才更新；普通用户指定他人时打印红色 Permission denied.
-    成功后绿色提示，并注明 RAM only, reset on reboot。
+    更新后同样尝试写入 LBA 200-207，失败时追加黄字只读警告。
+    注意：成功文案仍是 "password updated (RAM only, reset on reboot)."
+    —— 该行属既有输出，按「只添加不修改」未改动，实际行为以是否出现
+    只读警告为准（无警告即已落盘）。
 
 [11] color
     8 行 x 2 列一次展示 16 种前景色，含编号、色名与 ######## 色块；
@@ -140,6 +166,97 @@
       Logical processors —— leaf 1 EBX[23:16]，0 时按 1 计（亮青）
     全部数值用自实现整型转十进制打印，不链接 libc。
 
+
+----- ramfs 内存文件系统（19-25，B 组第 1 个功能）-----
+
+ 路径规则:
+   绝对路径 / 开头；相对路径基于当前工作目录（. 与 .. 有效）；
+   最多 8 段路径组件、单节点上限 32 个子项。所有节点由内核堆（kmalloc）
+   动态创建，重启后清空，不落盘。
+   初始树: /、/root、/home、/home/zh、/home/zh/readme.txt（非空示例文件）。
+
+ 权限规则:
+   root 可在整个树内读写；普通用户只能在自己的 home 子树（/home/<name>）
+   内创建与删除，越界时打印红色 Permission denied（ramfs 层返回 -EPERM）。
+   cat / ls 等只读操作不受此限制。
+
+[19] ls [path]
+    缺省列当前目录，每行 4 个条目：
+      目录 —— 亮蓝 + 结尾 "/"；文件 —— 浅灰 + 文件名 + 十进制大小；
+      非空 .sh 文件 —— 亮绿（可执行示意）。
+    路径不存在红字 "ls: no such file or directory"，
+    目标是文件时红字 "ls: not a directory"。
+
+[20] cd <path>
+    切换当前工作目录（ramfs_chdir），成败即时反映到提示符的路径段。
+    无参数红字 "usage: cd <path>"；目标非目录红字 "cd: not a directory"。
+
+[21] pwd
+    输出当前目录绝对路径（绿字），如 /home/zh。
+
+[22] cat <file>
+    按 ramfs 内容打印文件；超过 4096 字节截断并追加黄字 truncated。
+    目标是目录时红字 "cat: is a directory"。
+    静态 4096 字节缓冲，不占内核栈。
+
+[23] mkdir <path>
+    新建目录，成功绿字 "mkdir: created"；已存在红字 "already exists"。
+
+[24] touch <path>
+    新建空文件，成功绿字 "touch: created"；已存在亦报已存在。
+
+[25] rm <path>
+    删除文件或空目录，成功绿字 "rm: removed"；
+    目录非空红字 "directory not empty"；普通用户越界红字 Permission denied。
+
+
+----- ATA 磁盘信息（26，B 组第 2 个功能）-----
+
+[26] diskinfo
+    亮青标题 "=== Disk ==="。
+    有盘（主通道 0x1F0 的 master 通过 IDENTIFY 0xEC）:
+      绿字 ATA primary master: present
+      浅灰 persist sectors: LBA 200-207
+    无盘:
+      黄字 no ATA disk detected
+      浅灰 run QEMU with -hda disk.img to persist users
+    该命令只反映硬件检测结果，不修改任何状态。
+
+
+----- FAT16 只读挂载（27-29，B 组第 3 个功能）-----
+
+ 说明:
+    独立的只读文件系统视图，与 ramfs 各走一套命令（ls/cat 仍属 ramfs，
+    fatls/fatcat 才访问 FAT16），互不覆盖、互不干扰。
+    读的是主通道的第二块盘（QEMU: -drive file=data.img,format=raw,if=ide,index=1），
+    只支持 8.3 短文件名（不解析 LFN），名字匹配大小写不敏感，
+    显示时按 FAT 规范输出大写。不支持写、mkdir、rm。
+
+[27] fatmount
+    读 LBA 0 解析 BPB（0x0B 字节每扇区 / 0x0D 扇区每簇 / 0x0E 保留扇区 /
+    0x10 FAT 数 / 0x11 根目录项数 / 0x16 FAT 大小 / 0x1C 分区前扇区 / 0x2C 根簇号），
+    校验每扇区 512 字节、每簇为 2 的幂、0x36 处为 "FAT16   "（或簇数落在
+    4085..65525 推断），成功后缓存 FAT / 根目录 / 数据区起始 LBA。
+       成功: 绿字 fat16 mounted
+       失败: 红字 fatmount: <原因>
+             无盘            -> no disk on primary slave
+             类型不符        -> not a FAT16 filesystem
+             BPB 非法        -> invalid BPB
+             读扇区失败      -> I/O error
+
+[28] fatls [path]
+    未挂载时红字 "not mounted, run fatmount first"，需先执行 fatmount。
+    缺省列根目录，每行 4 个条目：目录亮蓝 + "/"，文件浅灰；
+    跳过卷标、长文件名项以及 . 与 .. 两个伪目录（子目录列表同样过滤）。
+    支持根目录与一层子目录（最多 4 段路径）。
+    错误: no such file or directory / not a directory / I/O error。
+
+[29] fatcat <path>
+    按簇链（FAT 项跟随，>=0xFFF8 视为链尾）读取并打印文件内容，
+    超过 4096 字节截断并追加黄字 truncated。
+    无参数红字 "usage: fatcat <path>"；目标是目录时红字 "is a directory"。
+    8.3 名大小写不敏感，fatcat /hello.txt 与 /HELLO.TXT 等价。
+
  其它提示:
     未知命令 -> 亮红 "zh_OS: command not found: <cmd>"
                 亮黄 "Type 'help' for a list of commands."
@@ -156,10 +273,24 @@
    ./setup.sh                 # 首次：安装依赖并写入 env.mode
    ./check.sh                 # 只读体检：打印 gcc/nasm/grub-mkrescue/xorriso/qemu 版本
    ./build.sh                 # 编译内核并用 grub-mkrescue 生成 zh_OS-0.1beta.iso
+
+ 三种启动方式（按需选择）:
+   # 1) 最小启动：无磁盘，账户走内存态
    qemu-system-x86_64 -cdrom zh_OS-0.1beta.iso -m 128
 
+   # 2) 用户表持久化：再挂一块可写磁盘
+   dd if=/dev/zero of=disk.img bs=1M count=16
+   qemu-system-x86_64 -cdrom zh_OS-0.1beta.iso \
+     -drive file=disk.img,format=raw,if=ide -m 128
+
+   # 3) 再加一块 FAT16 数据盘（主通道从盘 index=1）
+   ./build/mkfat16_img.sh      # 生成 32MB data.img，含 hello.txt / zh.txt / sub/
+   qemu-system-x86_64 -cdrom zh_OS-0.1beta.iso \
+     -drive file=disk.img,format=raw,if=ide \
+     -drive file=data.img,format=raw,if=ide,index=1 -m 128
+
  校验新代码是否编进内核:
-   strings build/zh_OS.elf | grep -E 'Welcome back|built-in commands|uptime'
+   strings build/zh_OS.elf | grep -E 'Welcome back|built-in commands|fat16 mounted|ATA primary'
 
  把 ISO 复制到 Windows 桌面（供 VirtualBox / VMware 使用）:
    cp zh_OS-0.1beta.iso /mnt/c/Users/你的用户名/Desktop/
@@ -170,17 +301,32 @@
  常用验收流程（QEMU 内）:
    login: zh / Password: zh
    help / color / uname / whoami / uptime / date / meminfo / dmesg / cpuinfo
-   useradd test                 -> 红色 Permission denied.
+   ls / cd /home/zh / pwd / cat readme.txt / mkdir tmp / touch a.txt / rm a.txt
+   diskinfo                    -> 有盘绿字 present / 无盘黄字 no ATA disk detected
+   fatls                       -> 未挂载红字提示
+   fatmount / fatls / / fatcat /hello.txt / fatls /sub
+   useradd test                -> 普通用户红字 Permission denied.
    su root / Password: zh       -> 提示符变红 #
-   useradd test                 -> 绿色创建成功
+   useradd test                -> 绿色创建成功（有盘时无只读警告）
    passwd                       -> 改自己的密码
    logout -> login: test / Password: zh -> 绿色 Welcome back, test!
+   重启后（挂 disk.img 时）test 仍可登录，改过的密码仍生效
+
+ 无头回归脚本（build/，不参与编译）:
+   build/qemu_dump_ramfs.sh        # ramfs 七命令逐屏
+   build/qemu_dump_ata.sh [no|hdd]# 无盘 / 有盘两种持久化场景
+   build/qemu_dump_ata_passwd.sh   # 改密跨重启
+   build/qemu_verify_ata_regress.sh# cpuinfo/ramfs/历史键/logout 回归
+   build/qemu_dump_fat.sh          # FAT16 十屏验收
+   build/qemu_verify_fat_regress.sh# 全量回归
+   python3 build/parse_vga.py <dump.log> 'label1,label2'   # 渲染 xp 导出的 VGA 文本
 
 
 五、注意事项
 --------------------------------------------------------------------------------
  * 改动任何源码后必须重新执行 ./build.sh，旧 ISO 不会自动更新。
- * 账户表、堆、PIT 计数全在内存中，重启后复位；没有文件系统与磁盘持久化。
+ * 账户表默认内存态；只有挂载可写磁盘时才会从 LBA 200-207 读回并写回。
+ * ramfs 全内存态，重启清空，不落盘；FAT16 是只读挂载，两者互不影响。
  * 没有用户态、进程、SMP、定时器时间戳之外的调度；Shell 运行在 ring 0。
  * VGA 文本模式为 CP437，屏幕上的内核输出必须是 ASCII；中文只出现在注释与文档中。
  * 已知限制的完整列表见 README.md「已知限制」一节。
