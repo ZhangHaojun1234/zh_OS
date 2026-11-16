@@ -1,6 +1,6 @@
 # zh_OS 0.2beta (x86_64)
 
-zh_OS 是一个教学用的 x86_64 64 位微型内核：GRUB2 + Multiboot2 引导，NASM + freestanding C
+zh_OS 是一个 x86_64 64 位微型内核：GRUB2 + Multiboot2 引导，NASM + freestanding C
 （无 libc），运行在 80x25 VGA 彩色文本模式下。它已经具备长模式、4 级页表、GDT、IDT/ISR/PIC、
 PS/2 键盘、行编辑器、仿 Linux 的账户登录、带彩色提示符的内置 Shell、内存文件系统 ramfs、
 ATA PIO 磁盘驱动（账户表持久化）以及 FAT16 只读挂载。
