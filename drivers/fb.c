@@ -452,6 +452,19 @@ int fb_set_mode(uint32_t w, uint32_t h, uint32_t bpp)
         return 0;
     }
 
+    /* [ADD] M27：先把新尺寸要用的帧缓冲映射出来，再切模式。
+     *
+     * 启动时 fb_init 只按 GRUB 给的那一档建过页表（1280x800x32 -> 5120*800 ≈ 4MB），
+     * 而 1920x1080x32 需要 1920*4*1080 ≈ 8.3MB —— 不补映射就写像素，写到 4MB 之后
+     * 立刻 #PF（error code 0x2：write + page not present），表现就是 KERNEL PANIC。
+     *
+     * paging_map_2mb_range 对已经映射过的 2MB 页只是覆盖重写同一项，不会重复吃 pd_pool，
+     * 所以放大/缩小分辨率都可以反复调用。 */
+    if (!paging_map_2mb_range((uint64_t)g_phys,
+                              (uint64_t)w * (uint64_t)(bpp / 8u) * (uint64_t)h)) {
+        return 0;
+    }
+
     dispi_write(VBE_DISPI_INDEX_ENABLE, VBE_DISPI_DISABLED);
     dispi_write(VBE_DISPI_INDEX_XRES, (uint16_t)w);
     dispi_write(VBE_DISPI_INDEX_YRES, (uint16_t)h);
@@ -479,10 +492,14 @@ int fb_set_mode(uint32_t w, uint32_t h, uint32_t bpp)
     dispi_write(VBE_DISPI_INDEX_ENABLE, VBE_DISPI_DISABLED);
     dispi_write(VBE_DISPI_INDEX_ENABLE, VBE_DISPI_ENABLED | VBE_DISPI_LFB_ENABLED);
 
-    /* [ADD] M26：把旧屏幕的"最后 keep 行"搬到新屏幕底部，再整屏重绘。
-     * 底部对齐是有意的 —— Linux 的 fbcon 换模式也是把历史留在屏幕下方、
-     * 光标跟着贴到底部，这样"越新的内容越靠下"这条直觉不会被打断。 */
-    /* 只搬"真正用过的行"：used_rows 里没有多余的空白行，历史就不会被顶到最上面 */
+    /* [ADD] M26 / [ADD] M27：把旧屏幕“真正用过的最后 keep 行”搬到新屏幕，再整屏重绘。
+     *
+     * 对齐方式按“新屏装不装得下”决定，而不是一律贴底：
+     *  - keep == g_rows（历史够多，正好填满新屏）：搬最后 g_rows 行，屏满，无空白；
+     *  - keep <  g_rows（1280x800 换到 1920x1080 就多出 17 行）：历史贴顶部、
+     *    光标紧跟历史最后一行 —— 否则历史被压到屏幕最底下、中间空一大片，
+     *    看起来就像屏坏了（1920x1080 实测就是这样）。
+     * src 起点恒 >= dst 起点，所以正序搬不会踩到还没读的行。 */
     keep = old_used < g_rows ? old_used : g_rows;
     if (keep > FB_BUF_ROWS) {
         keep = FB_BUF_ROWS;
@@ -492,7 +509,7 @@ int fb_set_mode(uint32_t w, uint32_t h, uint32_t bpp)
     }
     for (i2 = 0u; i2 < keep; ++i2) {
         uint32_t src_row = old_used - keep + i2;
-        uint32_t dst_row = g_rows - keep + i2;
+        uint32_t dst_row = i2;
         for (x2 = 0u; x2 < g_cols; ++x2) {
             if (x2 < old_cols && x2 < FB_BUF_COLS && src_row < FB_BUF_ROWS) {
                 g_buf[dst_row][x2] = g_buf[src_row][x2];
@@ -503,9 +520,10 @@ int fb_set_mode(uint32_t w, uint32_t h, uint32_t bpp)
             }
         }
     }
-    /* 顶部空出来的几行补空格（dst 恒 <= src，所以上面的搬法不会踩到没读的行） */
-    for (i2 = 0u; i2 < g_rows - keep && i2 < FB_BUF_ROWS; ++i2) {
-        for (x2 = 0u; x2 < g_cols && x2 < FB_BUF_COLS; ++x2) {
+    /* 历史下面的空行、新屏右侧多出来的列，一起刷成空格 */
+    for (i2 = 0u; i2 < g_rows && i2 < FB_BUF_ROWS; ++i2) {
+        uint32_t from = (i2 < keep) ? g_cols : 0u;
+        for (x2 = from; x2 < g_cols && x2 < FB_BUF_COLS; ++x2) {
             g_buf[i2][x2].ch = ' ';
             g_buf[i2][x2].fg = g_fg_idx;
             g_buf[i2][x2].bg = g_bg_idx;
@@ -513,9 +531,9 @@ int fb_set_mode(uint32_t w, uint32_t h, uint32_t bpp)
     }
     fb_redraw();
 
-    /* 光标贴在历史最后一行的下面一行（历史本身是底部对齐的，所以这里正好没有缝） */
-    g_cy = g_rows - 1u;
-    g_used_rows = g_rows;
+    /* 光标落在历史最后一行之后；历史填满整屏时就是最后一行 */
+    g_used_rows = (keep < g_rows) ? keep : g_rows;
+    g_cy = (keep < g_rows) ? keep : (g_rows - 1u);
     g_cx = 0u;
     return 1;
 }
