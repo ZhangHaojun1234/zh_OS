@@ -5,12 +5,12 @@ zh_OS 是一个教学用的 x86_64 64 位微型内核：GRUB2 + Multiboot2 引�
 PS/2 键盘、行编辑器、仿 Linux 的账户登录、带彩色提示符的内置 Shell、内存文件系统 ramfs、
 ATA PIO 磁盘驱动（账户表持久化）以及 FAT16 只读挂载。
 
-- **统一版本号**：`zh_OS 0.2beta (x86_64)`。启动横幅、`uname` 命令、登录横幅与 GRUB 菜单项
-  都由 `kernel/version.h` 的 `ZH_OS_VERSION_TEXT` 提供；`build.sh` 在构建时会校验脚本侧的
-  `VERSION_TEXT` 与它一致，防止只改一处造成版本漂移。
+- **统一版本号**：zh_OS 0.2beta (x86_64)。启动横幅、uname 命令、登录横幅与 GRUB 菜单项
+  都由 kernel/version.h 的 ZH_OS_VERSION_TEXT 提供；build.sh 在构建时会校验脚本侧的
+  VERSION_TEXT 与它一致，防止只改一处造成版本漂移。
 - **开发/构建环境**：宿主机 Windows 11，构建环境 WSL2 + Ubuntu。所有脚本都是 Linux `.sh`，
   在 WSL 内运行，**不生成任何 `.bat`**。
-- **可启动产物**：`zh_OS-0.2beta.iso`（Hybrid ISO，可用于 QEMU / VirtualBox / VMware）。
+- **可启动产物**：zh_OS-0.2beta.iso（Hybrid ISO，可用于 QEMU / VirtualBox / VMware）。
 
 > **首次登录**：内置 `root`（uid 0 / gid 0 / `/root` / 管理员）与
 > `zh`（uid 1000 / gid 1000 / `/home/zh`），**两者初始密码都是 `zh`**。
