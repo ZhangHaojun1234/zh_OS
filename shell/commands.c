@@ -1,7 +1,7 @@
 /* ============================================================================
- * zh_OS 0.1beta (x86_64)
+ * zh_OS 0.2beta (x86_64)
  * File:    shell/commands.c
- * Version: 0.1beta
+ * Version: 0.2beta
  * Brief:   13 个内置命令的实现与静态命令表。
  * ============================================================================ */
 
@@ -23,6 +23,24 @@
 #include "../drivers/ata.h"  // [ADD]  B 组第 2 个功能：ATA 驱动 + diskinfo 声明
 #include "../users/users_persist.h"  // [ADD]  B 组第 2 个功能：用户表持久化
 #include "../fs/fat16.h"  // [ADD]  B 组第 3 个功能：FAT16 只读挂载（fatmount/fatls/fatcat）
+#include "../fs/ext2.h"   // [ADD]  M19：ext2 只读挂载（ext2mount/ext2info/ext2ls/ext2cat）
+#include "../fs/vfs.h"
+#include "../drivers/fb.h"   // [ADD] M25：videomode    // [ADD]  M20：挂载表（mount/umount/mounts）
+#include "cmd_user.h"  // [ADD]  M1 用户态：ring3 命令
+#include "cmd_syscall.h"  // [ADD]  M2 系统调用：syscall 命令
+#include "cmd_memmap.h"  // [ADD]  M3 物理内存：memmap 命令
+#include "cmd_task.h"  // [ADD]  M4 进程与调度：tasks / taskrun 命令
+#include "cmd_vmm.h"  // [ADD]  M5 进程地址空间：vmspace 命令
+#include "cmd_elf.h"
+#include "cmd_fd.h"   // [ADD] M9
+#include "cmd_m10.h"  // [ADD] M10
+#include "cmd_argv.h" // [ADD] M11
+#include "cmd_mm.h"   // [ADD] M12
+#include "cmd_sh3.h"
+#include "cmd_cow.h"      /* [ADD] M15 */
+#include "cmd_demand.h"   /* [ADD] M16 */
+#include "cmd_sig.h"      /* [ADD] M17 */
+
 
 /*
  * 第 5 步：内置命令表。
@@ -411,6 +429,35 @@ const shell_command_t shell_command_table[] = {
     { "fatmount", cmd_fatmount, "Mount FAT16 on the second IDE disk" }, // [ADD]
     { "fatls",    cmd_fatls,    "List a FAT16 directory" }, // [ADD]
     { "fatcat",   cmd_fatcat,   "Print a FAT16 file" }, // [ADD]
+    { "ring3",    cmd_ring3,    "Enter ring 3 (user mode) self-test" }, // [ADD]
+    { "syscall",  cmd_syscall,  "Run ring3 demo over int 0x80 (M2)" }, // [ADD]
+    { "memmap",   cmd_memmap,   "Show physical memory map and frames" }, // [ADD]
+    { "tasks",    cmd_tasks,    "Show the task table (M4)" }, // [ADD]
+    { "taskrun",  cmd_taskrun,  "Run two ring3 tasks (M4); 'taskrun fault' kills one" }, // [ADD]
+    { "vmspace",  cmd_vmspace,  "Dump each process's page tables (M5)" }, // [ADD]
+    { "elf",      cmd_elf,      "Load an embedded ELF64 and run it in ring3 (M6)" }, // [ADD]
+    { "fd",       cmd_fd,       "Let a ring3 program open/read/close a file itself (M9)" }, // [ADD]
+    { "wr",       cmd_wr,       "A ring3 program creates and writes a file, then reads it back (M10)" }, // [ADD]
+    { "spawn",    cmd_spawn,    "fork -> child exec -> parent wait, the shell-command loop (M10)" }, // [ADD]
+    { "argv",     cmd_argv,     "exec() carries argc/argv into the new image (M11)" }, // [ADD]
+    { "mm",       cmd_mm,       "exec() reclaims the address space it replaces (M12)" }, // [ADD]
+    { "sh3",      cmd_sh3,      "start the ring-3 shell (/bin/zhsh3.elf) (M13)" }, // [ADD]
+    { "cow",      cmd_cow,      "fork() shares pages instead of copying them (M15)" }, // [ADD]
+    { "demand",   cmd_demand,   ".bss pages cost nothing until they are touched (M16)" }, // [ADD]
+    { "sig",      cmd_sig,      "kill/waitpid: a queued signal fires on the way back to ring3 (M17)" }, // [ADD]
+    { "ext2mount", cmd_ext2mount, "Mount ext2 read-only on the primary IDE disk (M19)" }, // [ADD] M19
+    { "ext2info",  cmd_ext2info,  "Show the parsed ext2 superblock geometry (M19)" },      // [ADD] M19
+    { "ext2ls",    cmd_ext2ls,    "List an ext2 directory (superblock->gdt->inode->dir) (M19)" }, // [ADD] M19
+    { "ext2cat",   cmd_ext2cat,   "Print an ext2 file (direct + indirect blocks) (M19)" }, // [ADD] M19
+    { "mount",     cmd_mount,     "Mount a filesystem at a directory: mount ext2 /mnt (M20)" }, // [ADD] M20
+    { "umount",    cmd_umount,    "Remove a mount point from the single namespace (M20)" },     // [ADD] M20
+    { "mounts",    cmd_mounts,    "Show the mount table, longest-prefix wins (M20)" },          // [ADD] M20
+    { "ext2create", cmd_ext2create, "Create a file on ext2 and write its content to disk (M21)" }, // [ADD] M21
+    { "ext2free",   cmd_ext2free,   "Show ext2 free blocks / free inodes from the superblock (M21)" }, // [ADD] M21
+    { "ext2fill",   cmd_ext2fill,   "Write a >12KB ext2 file, so the indirect block gets used (M22)" }, // [ADD] M22
+    { "ext2rm",     cmd_ext2rm,     "Delete an ext2 file: free its blocks and its inode (M23)" }, // [ADD] M23
+    { "videomode",  cmd_videomode,  "Show the framebuffer geometry the kernel got from GRUB (M25)" }, // [ADD] M25
+    { "res",        cmd_res,        "Switch resolution at runtime: res 1024x768 (M25)" },            // [ADD] M25
 };
 
 const uint32_t shell_command_table_size =

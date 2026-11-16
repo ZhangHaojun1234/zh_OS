@@ -1,7 +1,7 @@
 /* ============================================================================
- * zh_OS 0.1beta (x86_64)
+ * zh_OS 0.2beta (x86_64)
  * File:    users/login.c
- * Version: 0.1beta
+ * Version: 0.2beta
  * Brief:   清屏彩色登录横幅、登录循环与 3 次失败重来。
  * ============================================================================ */
 
@@ -107,10 +107,10 @@ static void banner_line(const char *text, enum vga_color color)
     vga_println(" |", VGA_LIGHT_GREEN, VGA_BLACK);
 }
 
-/* 标题分三段上色：zh_OS 亮绿 / 0.1beta 白 / (x86_64) Login 亮青。 */
+/* 标题分三段上色：zh_OS 亮绿 / 0.2beta 白 / (x86_64) Login 亮青。 */
 static void banner_title(void)
 {
-    /* 拼接结果统一为 "zh_OS 0.1beta (x86_64) Login"。 */
+    /* 拼接结果统一为 "zh_OS 0.2beta (x86_64) Login"。 */
     static const char part_a[] = ZH_OS_NAME;
     static const char part_b[] = " " ZH_OS_VERSION;
     static const char part_c[] = " (" ZH_OS_ARCH ") Login";

@@ -1,7 +1,7 @@
 /* ============================================================================
- * zh_OS 0.1beta (x86_64)
+ * zh_OS 0.2beta (x86_64)
  * File:    fs/ramfs.c
- * Version: 0.1beta
+ * Version: 0.2beta
  * Brief:   ramfs 内存态文件系统实现（节点管理、路径解析、权限判断）。
  *
  * B 组第 1 个功能，纯增量「只添加，不修改」：本文件与 ramfs.h 都是新文件，
@@ -214,6 +214,27 @@ static bool can_write(ramfs_node_t *dir)
     return in_home(dir);
 }
 
+/* [ADD] M8：`/bin` 是"程序目录"，按 Linux 惯例对所有人可读（相当于 0755）。
+ * ramfs 没有 mode 位，所以这里按路径判断：根节点下的 bin 子树一律可读可进入。
+ * 有了它，普通用户才能 exec("/bin/xxx.elf") —— 就像 Linux 里谁都能执行 /bin/sh。 */
+static bool in_bin_dir(ramfs_node_t *node)
+{
+    ramfs_node_t *n = node;
+    const char *want = "bin";
+
+    while (n != 0 && n->parent != 0) {
+        if (n->parent->parent == 0) {
+            int i = 0;
+            while (want[i] != '\0' && n->name[i] == want[i]) {
+                ++i;
+            }
+            return want[i] == '\0' && n->name[i] == '\0';
+        }
+        n = n->parent;
+    }
+    return false;
+}
+
 /* 读/进入权限：同写权限的归属规则（读文件、cd 目录均受此约束） */
 static bool can_read(ramfs_node_t *dir)
 {
@@ -223,7 +244,7 @@ static bool can_read(ramfs_node_t *dir)
     if (user_is_root()) {
         return true;
     }
-    return in_home(dir);
+    return in_home(dir) || in_bin_dir(dir);
 }
 
 /* ------------------------------------------------------------------ */
@@ -627,4 +648,202 @@ const char *ramfs_strerror(int rc)
     case RAMFS_ERR_NOMEM:    return "out of memory";
     default:                 return "error";
     }
+}
+
+/* ------------------------------------------------------------------ */
+/* [ADD] M9：给 fd 表用的三个接口                                     */
+/* ------------------------------------------------------------------ */
+
+/* 打开前的检查：路径存在 + 是文件 + 当前用户可读。成功回填节点指针。 */
+int ramfs_open_check(const char *path, ramfs_node_t **out)
+{
+    int err = RAMFS_OK;
+    ramfs_node_t *node = resolve_node(path, &err);
+
+    if (node == 0) {
+        return err;
+    }
+    if (node->type != RAMFS_FILE) {
+        return RAMFS_ERR_ISDIR;
+    }
+    if (!can_read(node)) {
+        return RAMFS_ERR_PERM;
+    }
+    *out = node;
+    return RAMFS_OK;
+}
+
+/*
+ * [M14] readdir：按序号枚举目录条目（Linux 的 getdents 的雏形）。
+ *   path  : 目录路径（NULL 或空串 = 当前目录）
+ *   index : 从 0 开始的序号
+ *   name  : 输出缓冲，写节点名（不含 '/'）
+ *   cap   : 输出缓冲容量
+ *   type  : 回填 RAMFS_FILE / RAMFS_DIR
+ * 返回：RAMFS_OK 成功；RAMFS_ERR_NOENT 没有这个序号了（枚举结束）；
+ *       RAMFS_ERR_NOTDIR 不是目录；RAMFS_ERR_PERM 越权。
+ *
+ * 为什么不返回一个"目录句柄"？因为本版没有 fd 之外的进程资源概念，
+ * 用"序号"足以让 ls 一页页翻完一个目录 —— 和 Linux 的 readdir(fd) 效果一样，
+ * 只是少了那个 fd（真正省事的地方在于调用方不需要 close）。
+ */
+int ramfs_readdir(const char *path, uint32_t index, char *name, uint32_t cap,
+                  ramfs_type_t *type)
+{
+    int err = RAMFS_OK;
+    ramfs_node_t *dir;
+    ramfs_node_t *child;
+    uint32_t n = 0u;
+
+    if (name == (char *)0 || cap == 0u) {
+        return RAMFS_ERR_INVAL;
+    }
+    if (path == (const char *)0 || path[0] == '\0') {
+        dir = ramfs_lookup(".");            /* 当前目录 */
+    } else {
+        dir = resolve_node(path, &err);
+        if (dir == (ramfs_node_t *)0) {
+            return err;
+        }
+    }
+    if (dir->type != RAMFS_DIR) {
+        return RAMFS_ERR_NOTDIR;
+    }
+    if (!can_read(dir)) {
+        return RAMFS_ERR_PERM;
+    }
+
+    for (child = dir->children; child != (ramfs_node_t *)0; child = child->next) {
+        if (n == index) {
+            uint32_t i = 0u;
+
+            while (child->name[i] != '\0' && i + 1u < cap) {
+                name[i] = child->name[i];
+                ++i;
+            }
+            name[i] = '\0';
+            if (type != (ramfs_type_t *)0) {
+                *type = child->type;
+            }
+            return RAMFS_OK;
+        }
+        ++n;
+    }
+    return RAMFS_ERR_NOENT;
+}
+uint64_t ramfs_node_size(const ramfs_node_t *node)
+{
+    return (node == 0) ? 0u : node->size;
+}
+
+/*
+ * 从 node 的 off 处读最多 maxlen 字节。这里不做权限检查 —— open 时已经查过，
+ * 与 Linux 一致（read 只认 fd，不再回头查 inode 权限）。
+ */
+int ramfs_node_read_at(ramfs_node_t *node, uint64_t off, uint8_t *buf,
+                       uint64_t maxlen, uint64_t *outlen)
+{
+    uint64_t n = 0u;
+
+    if (outlen == (uint64_t *)0) {
+        return RAMFS_ERR_INVAL;
+    }
+    *outlen = 0u;
+    if (node == 0 || buf == 0) {
+        return RAMFS_ERR_INVAL;
+    }
+    if (node->type != RAMFS_FILE) {
+        return RAMFS_ERR_ISDIR;
+    }
+    if (off >= node->size || node->data == 0) {
+        return RAMFS_OK;   /* 越过文件尾：读 0 字节，就是 EOF */
+    }
+    n = node->size - off;
+    if (n > maxlen) {
+        n = maxlen;
+    }
+    for (uint64_t i = 0; i < n; ++i) {
+        buf[i] = node->data[off + i];
+    }
+    *outlen = n;
+    return RAMFS_OK;
+}
+
+/* ------------------------------------------------------------------ */
+/* [ADD] M10：可写文件（creat / append）                                */
+/* ------------------------------------------------------------------ */
+
+/*
+ * creat：父目录可写才允许；目标不存在就新建，存在且是文件就清空（O_TRUNC）。
+ * 与 Linux 的 creat(path, 0666) 对应，只是这里没有 mode 位。
+ */
+int ramfs_create_file(const char *path, ramfs_node_t **out)
+{
+    int err = RAMFS_OK;
+    char name[RAMFS_COMP_SZ];
+    ramfs_node_t *parent = resolve_parent(path, name, &err);
+    ramfs_node_t *child;
+
+    if (parent == 0) {
+        return err;
+    }
+    if (!can_write(parent)) {
+        return RAMFS_ERR_PERM;
+    }
+    child = node_find_child(parent, name);
+    if (child == 0) {
+        child = ramfs_node_new(name, RAMFS_FILE);
+        if (child == 0) {
+            return RAMFS_ERR_NOMEM;
+        }
+        node_attach(parent, child);
+    } else if (child->type == RAMFS_DIR) {
+        return RAMFS_ERR_ISDIR;
+    }
+    if (child->data != 0) {
+        kfree(child->data);
+        child->data = 0;
+    }
+    child->size = 0u;
+    *out = child;
+    return RAMFS_OK;
+}
+
+/*
+ * 追加写：重新申请一块更大的内存、拷旧内容、接上新内容、释放旧的。
+ * 这就是 Linux 里"文件数据在页缓存/块设备上增长"的最小版本 —— 内容真的变了，
+ * 不是往某个缓冲区里一塞就算数。
+ */
+int ramfs_node_append(ramfs_node_t *node, const uint8_t *buf, uint64_t len)
+{
+    uint8_t *nd;
+    uint64_t old;
+    uint64_t i;
+
+    if (node == 0 || buf == 0) {
+        return RAMFS_ERR_INVAL;
+    }
+    if (node->type != RAMFS_FILE) {
+        return RAMFS_ERR_ISDIR;
+    }
+    if (len == 0u) {
+        return RAMFS_OK;
+    }
+    old = node->size;
+    nd = (uint8_t *)kmalloc(old + len);
+    if (nd == 0) {
+        return RAMFS_ERR_NOMEM;
+    }
+    for (i = 0u; i < old; ++i) {
+        nd[i] = node->data[i];
+    }
+    for (i = 0u; i < len; ++i) {
+        nd[old + i] = buf[i];
+    }
+    if (node->data != 0) {
+        kfree(node->data);
+    }
+    node->data = nd;
+    node->size = old + len;
+    return RAMFS_OK;
 }

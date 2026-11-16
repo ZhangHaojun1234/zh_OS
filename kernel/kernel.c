@@ -1,7 +1,7 @@
 /* ============================================================================
- * zh_OS 0.1beta (x86_64)
+ * zh_OS 0.2beta (x86_64)
  * File:    kernel/kernel.c
- * Version: 0.1beta
+ * Version: 0.2beta
  * Brief:   内核主入口：初始化各子系统，最后进入登录 + Shell 循环。
  * ============================================================================ */
 
@@ -21,12 +21,17 @@
 #include "../mm/heap.h"  // [ADD]
 #include "pit.h"  // [ADD]
 #include "history.h"  // [ADD]
-#include "../fs/ramfs.h"  // [ADD]
+#include "../fs/ramfs.h"
+#include "../fs/initrd.h"   // [ADD] M8：initrd（把 ELF 铺进 /bin）
+#include "../mm/phys.h"  // [ADD]  M3 物理内存：Multiboot2 内存图 + 页帧位图分配器
+#include "fb.h"  // [ADD] M25：Multiboot2 帧缓冲（图形模式 + 点阵字体）
 #include "ata.h"  // [ADD]  B 组第 2 个功能：ATA PIO 驱动
 #include "users_persist.h"  // [ADD]  B 组第 2 个功能：用户表持久化
 // [ADD] 本文件已有 static klog(enum log_level,...)，不能包含 klog.h，改用别名声明
 extern void klog_init(void); // [ADD]
 extern void klog_ring(const char *fmt, ...); // [ADD]
+#include "tss.h"  // [ADD]  M1 用户态：含 DPL=3 用户段的 GDT + TSS
+#include "syscall.h"  // [ADD]  M2 系统调用：int 0x80 门与分发器
 
 /*
  * zh_OS 内核入口。
@@ -101,7 +106,7 @@ static void klog(enum log_level level, const char *message)
 /* 首行 banner，格式参考 Linux 的 "Linux version ..." 行 */
 static void print_banner(void)
 {
-    /* 首行以统一版本号开头：zh_OS 0.1beta (x86_64) */
+    /* 首行以统一版本号开头：zh_OS 0.2beta (x86_64) */
     vga_print(ZH_OS_VERSION_TEXT " (", VGA_WHITE, VGA_BLACK);
 #if defined(__clang__)
     vga_print("clang ", VGA_WHITE, VGA_BLACK);
@@ -183,15 +188,23 @@ void kernel_main(uint32_t mb2_magic, uint32_t mb2_info)
     (void)mb2_info;
 
     gdt_init();
+    tss_init(); // [ADD]  M1 用户态：7 项 GDT（+ 用户段 + TSS）+ ltr
     paging_init();
 
     vga_init();
 
     heap_init(); // [ADD]
+    /* [ADD] M3：物理内存管理必须早于任何"想要真页面"的子系统的初始化。
+     * 它只读 GRUB 留下的 Multiboot2 信息，不依赖堆、不依赖中断。 */
+    phys_init(mb2_magic, mb2_info); // [ADD]
+    /* [ADD] M25：拿 GRUB 给的 framebuffer。成了就从这一行起，屏幕上所有字符
+     * 由 fb.c 用 8x16 点阵字体画，屏幕几何随分辨率变化（1280x720 -> 160x45）。 */
+    (void)fb_init(mb2_info);
     klog_init(); // [ADD]
     history_init(); // [ADD]
     ramfs_init(); // [ADD]
     shell_set_cwd_fn(ramfs_get_cwd); // [ADD]
+    initrd_init(); // [ADD] M8：把嵌入的 ELF 铺进 /bin，让 exec 能按路径打开
     print_banner();
 
     klog(LOG_INFO, "gdt: 3 entries, kernel code 0x08, kernel data 0x10");
@@ -217,6 +230,7 @@ void kernel_main(uint32_t mb2_magic, uint32_t mb2_info)
 
     /* ---- 中断子系统：顺序必须是 IDT -> PIC -> 键盘驱动 -> 最后开中断 ---- */
     idt_init();
+    syscall_init(); // [ADD]  M2 系统调用：给向量 0x80 挂 DPL=3 的门
     klog(LOG_INFO, "idt: 256 entries, vectors 0-47 installed");
     klog_ring("idt: 256 entries, vectors 0-47 installed"); // [ADD]
 

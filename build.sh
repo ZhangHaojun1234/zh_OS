@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ============================================================================
-# zh_OS 0.1beta (x86_64)
+# zh_OS 0.2beta (x86_64)
 # File:    build.sh
-# Version: 0.1beta
+# Version: 0.2beta
 # Brief:   一键编译内核并用 grub-mkrescue 生成可启动 ISO。
 # ============================================================================
 
@@ -13,13 +13,15 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 ENV_MODE_FILE="$ROOT/env.mode"
 TOOLCHAIN_DIR="$ROOT/toolchain"
 TARGET="x86_64-elf"
-VERSION="0.1beta"
+VERSION="0.2beta"
 ARCH_LABEL="x86_64"
 VERSION_TEXT="zh_OS $VERSION ($ARCH_LABEL)"   # 必须与 kernel/version.h 的 ZH_OS_VERSION_TEXT 一致
 ISO_NAME="zh_OS-$VERSION.iso"
 BUILD_DIR="$ROOT/build"
 ISO_DIR="$ROOT/iso"
 ELF="$BUILD_DIR/zh_OS.elf"
+KERNEL_NAME_FB="zh_OS_fb.elf"           # [ADD] M25：带帧缓冲请求的同一份内核
+ELF_FB="$BUILD_DIR/$KERNEL_NAME_FB"
 KERNEL_NAME="zh_OS.elf"
 
 CFLAGS=(
@@ -88,7 +90,7 @@ usage() {
   读取项目根目录的 env.mode 决定工具链路线：
     system-gcc  使用系统 gcc / ld
     cross       使用 toolchain/bin/x86_64-elf-gcc 与 x86_64-elf-ld
-  产物：zh_OS-0.1beta.iso
+  产物：zh_OS-0.2beta.iso
 EOF
 }
 
@@ -176,10 +178,61 @@ compile_sources() {
   done
 }
 
+# [ADD] M6：编译用户态程序，并把它的 ELF 文件原样嵌进内核镜像。
+#
+# 两条规则都不能省：
+#  1) 用户程序**不能**用内核那套 CFLAGS（-mcmodel=small / -mno-red-zone 都是给内核
+#     用的），必须独立编译、独立链接，且链接到 0x40000000（M5 的进程私有窗口起点，
+#     见 user/user.ld），否则装进进程后所有绝对地址都是错的。
+#  2) 嵌入用 `ld -r -b binary`：它把任意文件当成"一个只含数据的 .o"，
+#     生成 _binary_hello_elf_start / _end / _size 三个符号，效果等价于 Linux 的 initrd。
+#     必须切到 build/ 目录执行，符号名才不含目录前缀（_binary_hello_elf_start）。
+build_user_programs() {
+  # [ADD] M7：用户程序清单。每加一个 user/*.c，这里加一个名字即可
+  #              （hello = M6 的回归例子；forkdemo = M7 的 fork/wait 演示）。
+  local progs=(hello forkdemo execdemo fddemo wrdemo spawndemo argvdemo reexec zhsh3 ls cat cowdemo demanddemo spin sigdemo sigcatch jobdemo)
+  local prog
+
+  mkdir -p "$BUILD_DIR/user"
+  for prog in "${progs[@]}"; do
+    info "编译用户程序 user/$prog.c ..."
+    run_cmd "$CC" -m64 -ffreestanding -fno-pie -no-pie -fno-stack-protector \
+      -fno-asynchronous-unwind-tables -nostdlib -O2 -Wall -Wextra \
+      -c "$ROOT/user/$prog.c" -o "$BUILD_DIR/user/$prog.o"
+    info "链接用户程序 $prog（装载地址 0x40000000）..."
+    run_cmd "$LD" -m elf_x86_64 -T "$ROOT/user/user.ld" \
+      -o "$BUILD_DIR/$prog.elf" "$BUILD_DIR/user/$prog.o"
+    info "把 $prog.elf 嵌进内核镜像（ld -r -b binary）..."
+    (cd "$BUILD_DIR" && "$LD" -r -b binary "$prog.elf" -o "${prog}_blob.o") || {
+      die "嵌入 $prog.elf 失败"
+    }
+    OBJECTS+=("$BUILD_DIR/${prog}_blob.o")
+    ok "用户程序已嵌入：build/$prog.elf（$(stat -c %s "$BUILD_DIR/$prog.elf") 字节）"
+  done
+}
+
+# [ADD] M25：两个内核。boot.asm 里的帧缓冲请求标签用 -DFB_REQUEST 才编进来，
+# 其余目标文件完全一样，只换 boot 那一个 .o。
+#   $ELF      = $KERNEL_NAME      不带 fb 标签 -> GRUB 给文本模式 80x25
+#   $ELF_FB   = $KERNEL_NAME_FB   带 fb 标签   -> GRUB 给图形模式 + Multiboot2 fb 标签
 link_kernel() {
+  local obj
   info "链接 $KERNEL_NAME ..."
   run_cmd "$LD" -m elf_x86_64 -T "$ROOT/linker.ld" -o "$ELF" "${OBJECTS[@]}"
   ok "内核已生成：$ELF"
+
+  info "生成带帧缓冲请求的内核（-DFB_REQUEST）..."
+  run_cmd nasm -f elf64 -DFB_REQUEST "$ROOT/boot/boot.asm" -o "$BUILD_DIR/boot_fb.o"
+  local objs_fb=()
+  for obj in "${OBJECTS[@]}"; do
+    if [[ "$obj" == "$BUILD_DIR/boot/boot.o" ]]; then
+      objs_fb+=("$BUILD_DIR/boot_fb.o")
+    else
+      objs_fb+=("$obj")
+    fi
+  done
+  run_cmd "$LD" -m elf_x86_64 -T "$ROOT/linker.ld" -o "$ELF_FB" "${objs_fb[@]}"
+  ok "图形模式内核已生成：$ELF_FB"
 }
 
 # 构建时核对 C 侧与脚本侧的版本字符串，防止只改了一处造成横幅 / uname / 菜单不一致。
@@ -201,11 +254,26 @@ write_grub_cfg() {
 # Version: $VERSION
 # Brief:   GRUB2 菜单，用 multiboot2 加载内核 ELF（由 build.sh 自动生成）。
 # ============================================================================
-set timeout=0
+set timeout=3
 set default=0
 
-menuentry "$VERSION_TEXT" {
+# [ADD] M25：分辨率。GRUB 用 gfxpayload 控制交给内核的图形模式，
+# multiboot2 会把 framebuffer 标签（type 8）一起传下去，内核据此算行列。
+insmod vbe
+insmod gfxterm
+set gfxmode=auto
+terminal_output gfxterm
+set gfxpayload=keep
+
+# 默认进文本模式：这样老的分等效验证脚本（靠读 0xB8000）都还能跑。
+# 想要图形模式在第 2 项，按一下方向键下再回车即可（res 命令只在图形模式下有效）。
+menuentry "$VERSION_TEXT  text mode 80x25 (no framebuffer)" {
+    set gfxpayload=text
     multiboot2 /boot/$KERNEL_NAME
+    boot
+}
+menuentry "$VERSION_TEXT  graphics (framebuffer, res switchable)" {
+    multiboot2 /boot/$KERNEL_NAME_FB
     boot
 }
 EOF
@@ -216,6 +284,7 @@ build_iso() {
   rm -rf "$ISO_DIR"
   mkdir -p "$ISO_DIR/boot/grub"
   cp "$ELF" "$ISO_DIR/boot/$KERNEL_NAME"
+  cp "$ELF_FB" "$ISO_DIR/boot/$KERNEL_NAME_FB"
   write_grub_cfg
 
   info "生成 $ISO_NAME ..."
@@ -247,11 +316,16 @@ main() {
   SOURCES+=("$ROOT/arch/cpuinfo.c")  # [ADD] 显式登记新目录 arch/ 下的源码，不改 collect_sources
   SOURCES+=("$ROOT/fs/ramfs.c")  # [ADD] 显式登记新目录 fs/ 下的源码，不改 collect_sources
   SOURCES+=("$ROOT/fs/fat16.c")  # [ADD] B 组第 3 个功能：fs/ 不在自动扫描列表，显式登记 FAT16
+  SOURCES+=("$ROOT/fs/initrd.c")  # [ADD] M8：把嵌入的 ELF 铺进 ramfs（fs/ 同样不在自动扫描列表）
+  SOURCES+=("$ROOT/fs/file.c")  # [ADD] M9：每进程 fd 表
+  SOURCES+=("$ROOT/fs/ext2.c")  # [ADD] M19：ext2 只读（fs/ 不在自动扫描列表，显式登记）
+  SOURCES+=("$ROOT/fs/vfs.c")   # [ADD] M20：挂载表 + 最长前缀路径解析
   # [ADD] drivers/ata.c 与 users/users_persist.c 不需要显式登记：collect_sources 的目录列表
   #       已含 drivers/ 与 users/，会自动扫描到这两个文件。若再 SOURCES+= 同路径，链接时会
   #       出现 "multiple definition"（同一 .o 被当两次输入）。故此处仅留说明，不追加重复路径。
   #       （与 arch/、fs/ 不同：那两个是新目录，不在自动扫描列表里，才必须显式登记。）
   compile_sources
+  build_user_programs   # [ADD] M6：用户态 ELF + 二进制嵌入
   link_kernel
   build_iso
 

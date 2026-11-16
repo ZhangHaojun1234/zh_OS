@@ -1,7 +1,7 @@
 /* ============================================================================
- * zh_OS 0.1beta (x86_64)
+ * zh_OS 0.2beta (x86_64)
  * File:    shell/cmd_disk.c
- * Version: 0.1beta
+ * Version: 0.2beta
  * Brief:   diskinfo 命令：显示 ATA 磁盘状态与持久化扇区信息。
  *
  * B 组第 2 个功能（ATA PIO + 用户表持久化）的纯增量新增文件。

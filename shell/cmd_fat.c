@@ -1,7 +1,7 @@
 /* ============================================================================
- * zh_OS 0.1beta (x86_64)
+ * zh_OS 0.2beta (x86_64)
  * File:    shell/cmd_fat.c
- * Version: 0.1beta
+ * Version: 0.2beta
  * Brief:   FAT16 只读的 3 个 Shell 命令：fatmount / fatls / fatcat。
  *
  * B 组第 3 个功能，纯增量「只添加，不修改」：本文件为新文件，命令表在

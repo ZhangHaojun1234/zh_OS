@@ -1,7 +1,7 @@
 /* ============================================================================
- * zh_OS 0.1beta (x86_64)
+ * zh_OS 0.2beta (x86_64)
  * File:    arch/cpuinfo.h
- * Version: 0.1beta
+ * Version: 0.2beta
  * Brief:   CPUID 指令封装与 cpuinfo 命令声明。
  *
  * 设计要点：

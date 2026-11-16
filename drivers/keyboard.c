@@ -1,7 +1,7 @@
 /* ============================================================================
- * zh_OS 0.1beta (x86_64)
+ * zh_OS 0.2beta (x86_64)
  * File:    drivers/keyboard.c
- * Version: 0.1beta
+ * Version: 0.2beta
  * Brief:   PS/2 键盘 IRQ1 驱动：扫描码映射与 256 字节环形缓冲。
  * ============================================================================ */
 
@@ -50,6 +50,7 @@ static const char keymap_shift[128] = {
     0,    ' ',  0,    0,    0,    0,    0,    0,    /* 0x38 - 0x3F */
 };
 
+#define SC_LCTRL        0x1D   /* [ADD] M17：Ctrl-C 用 */
 #define SC_LSHIFT       0x2A
 #define SC_RSHIFT       0x36
 #define SC_LSHIFT_REL   0xAA
@@ -62,6 +63,9 @@ static volatile uint16_t buffer_head; /* 写入位置（中断侧） */
 static volatile uint16_t buffer_tail; /* 读取位置（消费侧） */
 
 static int shift_left;
+static int ctrl_down;      /* [ADD] M17 */
+static volatile int ctrl_c_flag;   /* [ADD] M17：键盘中断里置位，isr 里取走 */
+static volatile int ctrl_z_flag;   /* [ADD] M18：同上，对应 Ctrl-Z */
 static int shift_right;
 static int caps_lock;
 static int extended;
@@ -159,6 +163,9 @@ void keyboard_handle_irq(void)
     const uint8_t code = (uint8_t)(scancode & 0x7Fu);
 
     switch (code) {
+    case SC_LCTRL:                 /* [ADD] M17 */
+        ctrl_down = !released;
+        return;
     case SC_LSHIFT:
         shift_left = !released;
         return;
@@ -191,6 +198,17 @@ void keyboard_handle_irq(void)
      * 避免先取大写映射、再翻转一次导致大小写颠倒。
      * 非字母字符只受 Shift 影响（数字 -> 符号等）。
      */
+    /* [ADD] M17：Ctrl-C 不当普通字符送出去，而是变成一个"打断"事件 */
+    if (ctrl_down && (ch == 'c' || ch == 'C')) {
+        ctrl_c_flag = 1;
+        return;
+    }
+    /* [ADD] M18：Ctrl-Z 同理，变成一个"停住前台作业"的事件（SIGTSTP） */
+    if (ctrl_down && (ch == 'z' || ch == 'Z')) {
+        ctrl_z_flag = 1;
+        return;
+    }
+
     const int is_alpha = (ch >= 'a' && ch <= 'z');
     const int upper = is_alpha ? (shift ^ caps_lock) : shift;
     if (upper) {
@@ -213,6 +231,22 @@ char keyboard_getchar(void)
     }
 }
 
+/* [ADD] M17：取走"刚按过 Ctrl-C"这个事件（读后清零，非阻塞）。 */
+int keyboard_take_ctrl_c(void)
+{
+    int was = ctrl_c_flag;
+    ctrl_c_flag = 0;
+    return was;
+}
+
+/* [ADD] M18：取走"刚按过 Ctrl-Z"这个事件（读后清零，非阻塞）。 */
+int keyboard_take_ctrl_z(void)
+{
+    int was = ctrl_z_flag;
+    ctrl_z_flag = 0;
+    return was;
+}
+
 int keyboard_haschar(void)
 {
     return buffer_tail != buffer_head;
@@ -223,6 +257,7 @@ void keyboard_init(void)
     buffer_head = 0;
     buffer_tail = 0;
     shift_left = 0;
+    ctrl_down = 0;   /* [ADD] M17 */
     shift_right = 0;
     caps_lock = 0;
     extended = 0;

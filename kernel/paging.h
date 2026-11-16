@@ -1,7 +1,7 @@
 /* ============================================================================
- * zh_OS 0.1beta (x86_64)
+ * zh_OS 0.2beta (x86_64)
  * File:    kernel/paging.h
- * Version: 0.1beta
+ * Version: 0.2beta
  * Brief:   页表接口声明。
  * ============================================================================ */
 
@@ -18,11 +18,17 @@
 #define PAGE_WRITABLE   (1ULL << 1)
 #define PAGE_USER       (1ULL << 2)
 #define PAGE_HUGE       (1ULL << 7)
+/* [ADD] M15：PTE 第 9 位（x86-64 留给 OS 用的三位之一）。
+ * 置位表示"这一页是 COW 页"：父子共享、只读，谁写谁触发 #PF 再复制一份。 */
+#define PAGE_COW        (1ULL << 9)
 
 /* 建立 4 级页表并恒等映射低 1GB，然后加载 CR3。 */
 void paging_init(void);
 
 /* 返回当前 CR3（PML4 物理地址）。 */
 uint64_t paging_get_cr3(void);
+
+/* [ADD] M25：把物理区间映射成恒等可写（2MB 大页），帧缓冲用 */
+int paging_map_2mb_range(uint64_t phys, uint64_t bytes);
 
 #endif /* ZH_OS_PAGING_H */

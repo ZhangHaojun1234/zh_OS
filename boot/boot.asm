@@ -1,7 +1,7 @@
 ; ============================================================================
-; zh_OS 0.1beta (x86_64)
+; zh_OS 0.2beta (x86_64)
 ; File:    boot/boot.asm
-; Version: 0.1beta
+; Version: 0.2beta
 ; Brief:   Multiboot2 头、32->64 位两段式引导入口、临时页表与 16KB 栈。
 ; ============================================================================
 
@@ -30,6 +30,24 @@ mb2_header_start:
     dd MB2_ARCH_I386
     dd mb2_header_end - mb2_header_start
     dd -(MB2_MAGIC + MB2_ARCH_I386 + (mb2_header_end - mb2_header_start))
+align 8
+
+; [ADD] M25：帧缓冲请求标签（Multiboot2 type = 5）。
+; 宽/高/色深写 0 表示"不指定"，让 GRUB 自己挑一个能用的图形模式；
+; 内核拿到 type=8 标签后再用 Bochs VBE 接口运行时换分辨率（命令 res）。
+; 注意：这个标签只在 FB_REQUEST 时编进来。GRUB 一看到 type=5 就一定给图形模式，
+; 连 gfxpayload=text 也挡不住；所以要保留"纯文本模式"这一个退路，必须用两个内核：
+;   zh_OS.elf    不带此标签 -> 文本模式（老的分等效验证脚本都靠读 0xB8000）
+;   zh_OS_fb.elf 带此标签   -> 图形模式（res 命令在这边才有意义）
+%ifdef FB_REQUEST
+align 8
+    dw 5                        ; 帧缓冲标签
+    dw 0                        ; flags
+    dd 20                       ; size
+    dd 0                        ; width  = 0：不指定
+    dd 0                        ; height = 0：不指定
+    dd 0                        ; depth  = 0：不指定
+%endif
 align 8
     dw 0                        ; 结束标签 type = 0
     dw 0                        ; flags

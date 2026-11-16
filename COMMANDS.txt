@@ -1,8 +1,8 @@
 ================================================================================
- zh_OS 0.1beta (x86_64) 命令说明
+ zh_OS 0.2beta (x86_64) 命令说明
 ================================================================================
  文件   : COMMANDS.txt
- 版本   : 0.1beta
+ 版本   : 0.2beta
  适用范围: 内置 Shell 命令速查 + 构建/运行命令
  命令来源: shell/commands.c 的 shell_command_table（当前共 29 条）
  说明   : 本文件只是文档，不参与编译；改动源码后仍须重新执行 ./build.sh
@@ -35,14 +35,14 @@
  密码输入回显 * ，不显示明文。
 
 
-二、内置命令速查表（29 条）
+二、内置命令速查表（58 条）
 --------------------------------------------------------------------------------
  序号  命令       参数              权限        作用
  ----  ---------  ----------------  ----------  ------------------------------
   1    help                       所有用户    彩色列出全部命令与说明
   2    clear                      所有用户    清屏
   3    echo       [args...]       所有用户    绿输出参数（空格连接）
-  4    uname                      所有用户    输出 zh_OS 0.1beta (x86_64)
+  4    uname                      所有用户    输出 zh_OS 0.2beta (x86_64)
   5    whoami                     所有用户    输出当前用户名
   6    login                      所有用户    在当前 Shell 内重新登录
   7    logout                     所有用户    退出 Shell 回到登录界面
@@ -71,9 +71,39 @@
  27    fatmount                   所有用户    挂载主通道第二块盘上的 FAT16
  28    fatls      [path]          所有用户    列 FAT16 目录
  29    fatcat     <path>          所有用户    打印 FAT16 文件（>4KB 截断）
+ ----  用户态 / 系统调用 / 物理内存（M1-M3）----
+ 30    ring3                      所有用户    进 ring3 自检（用 #PF 证明特权级生效）
+ 31    syscall                    所有用户    ring3 经 int 0x80 调内核再 sys_exit 回来
+ 32    memmap     [test]          所有用户    显示物理内存图 / 页帧分配器 / 可选自测
+ 33    taskrun    [fault]         所有用户    跑两个 ring3 任务（时钟抢占交替）
+ 34    tasks                      所有用户    打印 TCB 表（状态/ticks/切换数/退出或被杀）
+ 35    vmspace                    所有用户    打印每个进程的页表（VA->PA、CR3、PML4/PT 地址）
+ 36    elf                        所有用户    解析内嵌的 hello.elf 并装进新进程跑 ring3（M6）
+ 37    fd                         所有用户    让 ring3 程序自己 open/read/close 文件（M9）
+ 38    wr                         所有用户    ring3 程序 creat/write/close 一个文件再读回（M10）
+ 39    spawn                      所有用户    fork -> 子进程 exec -> 父进程 wait 的闭环（M10）
+ 40    argv                       所有用户    exec 携带 argc/argv 交给新映像（M11）
+ 41    mm                         所有用户    exec 换下来的旧地址空间是否被回收（M12）
+ 42    sh3                        所有用户    启动跑在 ring 3 的 shell（/bin/zhsh3.elf）（M13）
+ 43    cow                        所有用户    fork 只共享页帧、写时才复制（M15）
+ 44    demand                     所有用户    .bss 的页第一次访问时才真的占内存（M16）
+ 45    sig                        所有用户    信号：kill 只置位，回 ring3 前才送达；waitpid 拿 137（M17）
+ 46    ext2mount                  所有用户    挂载主通道主设备上的 ext2 只读（M19）
+ 47    ext2info                   所有用户    打印 ext2 超级块几何（magic/块大小/inode 表位置）（M19）
+ 48    ext2ls     [path]          所有用户    列 ext2 目录：超级块->块组描述符->inode->目录项（M19）
+ 49    ext2cat    <path>          所有用户    打印 ext2 文件：直接块 + 一级/二级间接块（M19）
+ 50    mount      <fs> </dir>    所有用户    把 ext2/fat16 挂进同一个 /（M20）
+ 51    umount     </dir>         所有用户    从挂载表摘掉一个挂载点（M20）
+ 52    mounts                    所有用户    打印挂载表（最长前缀匹配）（M20）
+ 53    ext2create <path> <text>  所有用户    在 ext2 上建文件并写内容（位图分配）（M21）
+ 54    ext2free                  所有用户    打印 ext2 空闲块 / 空闲 inode 计数（M21）
+ 55    ext2fill   <path> <KB>     所有用户    写 >12KB 文件，用上一级间接块（M22）
+ 56    ext2rm     <path>          所有用户    删文件：释放块 + inode + 目录项（M23）
+ ----  显示与分辨率（M25）----
 
-
+  57    videomode                 所有用户    报当前帧缓冲几何 / 文本行列
 三、命令详解
+  58    res        <W>x<H> [bpp]  所有用户    运行时改分辨率（Bochs VBE dispi）
 --------------------------------------------------------------------------------
 [1] help
     遍历 shell_command_table 打印命令名 + 英文说明，命令名绿、说明浅灰，
@@ -86,7 +116,7 @@
     把参数用单个空格连接后以绿输出；不带参数只输出一个空行。
 
 [4] uname
-    输出统一版本号字符串 "zh_OS 0.1beta (x86_64)"（亮绿）。
+    输出统一版本号字符串 "zh_OS 0.2beta (x86_64)"（亮绿）。
     该字符串来自 kernel/version.h，启动横幅 / 登录横幅 / GRUB 菜单同源。
 
 [5] whoami
@@ -204,10 +234,14 @@
 
 [24] touch <path>
     新建空文件，成功绿字 "touch: created"；已存在亦报已存在。
+    [M24] 路径落在挂载点里（如 /mnt/x）时改走 VFS，写进 ext2，输出换成
+    "created /mnt/x  (inode N)"（N 是 alloc_inode() 真分配到的 inode 号）。
 
 [25] rm <path>
     删除文件或空目录，成功绿字 "rm: removed"；
     目录非空红字 "directory not empty"；普通用户越界红字 Permission denied。
+    [M24] 路径落在挂载点里时改走 VFS 的 unlink，释放块与 inode，输出
+    "removed /mnt/x  - N blocks freed"；文件不存在红字 "rm: no such file or directory"。
 
 
 ----- ATA 磁盘信息（26，B 组第 2 个功能）-----
@@ -221,6 +255,314 @@
       黄字 no ATA disk detected
       浅灰 run QEMU with -hda disk.img to persist users
     该命令只反映硬件检测结果，不修改任何状态。
+
+
+----- 用户态 / 系统调用 / 物理内存（30-32，M1-M3）-----
+
+ 说明:
+    M1 打开 ring3：GDT 扩到 7 项（用户代码 0x18 / 用户数据 0x20 / TSS 0x28），
+    TSS.RSP0 指向专用的 16KB 内核栈，用户窗口是 512 个连续、2MB 对齐的物理帧
+    （M3 起由页帧分配器提供，不再是 .bss 里的静态数组）。
+    M2 加 int 0x80（IDT 门属性 0xEE = DPL 3），ABI 贴近 Linux i386 老习惯：
+    rax=调用号，rdi/rsi/rdx=参数，返回值写回 rax。已实现
+    sys_write(1) / sys_ticks(2) / sys_exit(3) / sys_cpl(4)。
+    M3 解析 Multiboot2 内存图（tag 6，缺失时退回 tag 4），用
+    1 bit = 1 帧（4KB）的位图管理物理内存：先整张标占用，再把 available
+    放出来，最后收回低 1MB / 内核映像 / 位图自身 / multiboot2 信息结构。
+
+[30] ring3
+    先往用户窗口里铺一段机器码：两次合法写入（窗口 U=1，写得动）→
+    pause/loop 空转（这段时间被 PIT 以 100Hz 反复打断，验证 TSS.RSP0 换栈）
+    → 往 0xB8F34 写 'X'（该 2MB 大页 U=0，必然 #PF）。
+       预期: 亮红 KERNEL PANIC: Page Fault (#PF)
+             error code = 0x7 (present + write + user)
+             cr2 = 0xb8f34    rip = 用户代码 + 25
+             cs = 0x1b (RPL 3)  ss = 0x23
+             绿字 ">> fault came from RING 3 (CPL=3): privilege level works."
+    说明: 这是"故意让它崩"的自检（M3 阶段还没有进程，用户态出错只能停机）。
+
+[31] syscall
+    M2 的双向路径：保存内核现场 → iretq 进 ring3 → 用户程序 int 0x80 →
+    sys_write 由内核代印一行 → sys_cpl 返回 3 → sys_exit 触发 usermode_resume
+    把 rsp 拨回保存点直接 ret 回 Shell（不 panic）。
+       预期末行: 绿字 "M2 PASS: ring 3 -> int 0x80 -> kernel -> sys_exit -> shell"
+       同时会看到: 越界缓冲被拒（buf 不在用户窗口内返回 -1）、
+                   res[2] caller cpl = 3。
+
+[32] memmap [test]
+    无参数打印两部分:
+      1) Physical memory map (Multiboot2 tag 6 / E820):
+         base / length / type（available, reserved, acpi-recl, acpi-nvs, bad-ram）
+         每行末给 MB 或 KB（不足 1MB 用 KB，避免把 1KB 的洞显示成 1MB）
+      2) Frame allocator (bitmap, 1 bit = 1 frame = 4 KB):
+         total RAM / used / free / 内核映像范围
+    帧上限只按"最高的一段 available 内存"算（不按整张图最高地址算）：
+    PC 的 E820 常在 4GB 附近报一大段 reserved 空洞，按它算会得出
+    total=4096MB、used 上百万帧的假数据。
+    memmap test 跑 mm/phys.c 的自测：单帧/连续/2MB 对齐/清零校验，
+    以及两类必须被拒的负例（不对齐释放、重复释放），最后校验 used 回到初值。
+    那两行亮红是故意的负例，随后绿字 PASS。
+
+[33] taskrun [fault]
+    M4 的核心验收：造两个 ring3 任务（A 打绿色 'A'、B 打青色 'B'），
+    每个任务有自己的 2MB 用户窗口和 8KB 内核栈，由 IRQ0 每 2 tick (20ms)
+    强制换人，所以屏幕上是 BABABABA... 的交错输出。
+    现场会先打印 quantum / 两个任务的 pid、窗口基址、内核栈顶，然后:
+      -- now running: expect A and B to interleave --
+      BABABABABABABABABABABABAback in ring 0: ...
+      Task table (M4 preemptive round-robin):
+        PID  NAME  STATE    TICKS  SWITCH  RESULT
+        0    A     DEAD      25    13      exit 0
+        1    B     DEAD      24    13      exit 0
+        context switches: 26   tasks created: 2
+      M4 PASS: two tasks ran interleaved, both exited normally
+    taskrun fault：让 B 打 5 个字母后故意往 0xB8000 写一个字节（ring3 碰显存 = #PF），
+    内核只杀掉 B 并换 A 继续跑，不 panic 整机：
+      [task] killed: pid=1 name=B vector=14 rip=0x600021 cr2=0xb8f34
+      ....(that task only; the machine keeps running)
+      AAAAAAAback in ring 0: ...
+      M4 PASS: only the faulting task died, the other one kept running
+    要点: 换人前必须重写 TSS.RSP0；帧地址取"最后一次被换出时的 r"；
+    zh_sched_enter 之前必须 cli（否则时钟会把引导帧踩坏）。
+
+[34] tasks
+    打印 TCB 表：PID / NAME / STATE(READY|RUNNING|DEAD) / TICKS / SWITCH /
+    RESULT（exit 码，或 killed by vector 14 (#PF) at cr2=...）。
+    表尾给累计上下文切换次数与创建过的任务数。没跑过 taskrun 时提示先跑它。
+
+[35] vmspace
+    M5 的"看得见"入口：把每个进程的页表直接打印出来。
+    表头先给 kernel CR3 与当前 CR3（跑完任务后两者应当相等），再给布局说明：
+      layout: [0, 1GB) kernel identity 2MB pages (U=0, shared by every process)
+              [0x40000000, 0x40200000) private window, 4 KB pages, U=1)
+      walk:   PML4[0] -> own PDPT -> [0]=kernel 2MB PD (U=0)
+                              -> [1]=own PD -> PD[0]=own PT -> 512 x 4 KB
+    然后每个进程一段：
+      pid 0  A   cr3=0x...352000
+        pml4=0x...352000  pdpt=0x...353000
+        pd  =0x...356000  pt  =0x...357000
+        mapped pages: 2 of 512
+          VA 0x0000000040000000 -> PA 0x0000000000357000
+          VA 0x00000000401ff000 -> PA 0x0000000000358000
+    两个进程的 VA 都是 0x40000000，PA 却不同（A 是 0x357000，B 是 0x35f000）——
+    这就是"同一虚拟地址、不同物理页"，进程隔离的定义。
+    想单独检查页表而不进 ring3：taskrun dry（只建进程 + 打印页表 + 自检走表）。
+
+[36] elf
+    M6 的主角：内核第一次"装载别人的程序"，而不是自己拼机器码。
+      用法1：elf parse   只解析不装载（VGA 只有 25 行，所以单独一条看得清）
+      用法2：elf         解析 -> 建进程 + 装载 -> 进 ring3 跑 -> 校验结果
+
+    elf parse 打出来的东西：
+      blob size : 4744 bytes, embedded in the kernel image (no file system yet)
+      magic     : 7f 45 4c 46 (\x7fELF)   class=2 (2=ELF64)
+      data      : 1 (1=little endian)    version=1
+      type      : 2 (2=ET_EXEC)  machine=62 (0x3e=EM_X86_64)
+      entry     : 0x40000000
+      phoff     : 0x40   phnum=2   phentsize=56
+      phdr 0     : type=1 PT_LOAD  flags=5 (R-X)
+                  vaddr=0x40000000  filesz=0x65  memsz=0x65
+      phdr 1     : type=0x6474e551 PT_GNU_STACK (ignored)
+
+    elf 的完整流程（一屏能看全）：
+      load:
+        PT_LOAD segments : 1   pages mapped: 1 (4 KB each)   .bss: 0
+        entry            : 0x40000000   user stack: 0x401ffff0
+        pid              : 0   cr3: 0x355000
+      run (ring3, rip = e_entry, own CR3, own stack):
+      hello from a real ELF64 binary (M6)
+      [kernel] sys_write: 36 bytes delivered for ring 3
+        after run        : state=DEAD  exit code=42  ticks=0  fault vector=0
+      M6 PASS: ...
+
+    这个程序是 user/hello.c 用 gcc 编出来的真 ELF64（不是内核拼的字节）：
+      gcc -m64 -ffreestanding -fno-pie -no-pie -nostdlib -O2 -c user/hello.c
+      ld -m elf_x86_64 -T user/user.ld -o build/hello.elf ...
+    装载地址 0x40000000 来自 user/user.ld，等于 M5 的进程私有窗口起点。
+    build.sh 再用 `ld -r -b binary hello.elf` 把整个 ELF 嵌进内核镜像
+    （相当于 Linux 的 initrd），符号名 _binary_hello_elf_start/_end/_size。
+
+    装载器支持的子集（kernel/elf.c）：
+      ET_EXEC + EM_X86_64 + PT_LOAD；无重定位、无动态链接、无 PT_INTERP。
+      逐段 -> 逐页 vmm_probe() -> 没有就 phys_alloc_frame() + vmm_map_4k()
+      -> 拷 p_filesz 字节 -> 清零 .bss -> rip = e_entry。
+
+    失败时会打印具体原因，例如：
+      not an ELF file (bad magic)
+      not ET_EXEC (no PIE/dynamic support yet)
+      entry point outside the user window
+      PT_LOAD outside the user window
+      out of physical frames while loading
+
+    验收脚本：bash build/qemu_verify_elf.sh（3 屏：提示符 / elf parse / elf）
+              关键行应出现 "M6 PASS" 与 "exit code=42"。
+
+    ---- elf fork（M7：fork / wait）----
+    跑的是另一个嵌入程序 build/forkdemo.elf（源文件 user/forkdemo.c）：
+      用法：elf fork
+    一屏能看全的输出：
+      M7 fork/wait demo: loading an ELF that forks and waits
+        blob      : 6688 bytes  load      : segments=1  pages=1  .bss=1
+        entry     : 0x00000000400001a0   stack top 0x00000000401ffff0
+      M7 fork/wait demo: started in pid 0
+      [kernel] fork: pid 0 -> pid 1  copied pages=2  child cr3=0x360000
+        [parent] fork returned child pid 1
+      [kernel] wait: pid 0 blocks until pid 1 exits
+        [child 1] pid=1 forked, touching my own copy of g_counter
+        [child 1] g_counter=5 -> exiting with 11
+        [parent] wait() -> 11   (child 1 collected)
+        [parent] my g_counter is still 0 -> the child's write did NOT leak
+      [kernel] fork: pid 0 -> pid 2  copied pages=2  child cr3=0x368000
+        [child 2] pid=2 exiting immediately with 22
+      [kernel] wait: pid 0 collected exit code 22 from pid 2
+        [parent] wait() -> 22   (child 2 collected)
+        after run        : state=DEAD  exit code=0  forks=2  waits=2  faults=0
+      M7 PASS: ...
+
+    它验证的正是 Linux fork 的语义：
+      - fork() 之后有两个执行流，都从 int 0x80 的下一条指令继续；
+        父进程 rax = 子进程 pid，子进程 rax = 0（复制 pt_regs 后把 ax 置 0）；
+      - 地址空间是整页复制的（copied pages=2 = 代码页 + 栈页），子进程把全局变量
+        加到 5，父进程读到的仍是 0 —— 内存没有共享；子进程的 cr3 与父进程不同；
+      - 第一次 wait() 走"阻塞"路径：父进程进 TASK_WAIT 让出 CPU，被换回时
+        rax 已经是子进程的退出码（由 notify_parent() 写进父进程保存的中断帧）；
+      - 第二次 wait() 走"僵尸"路径：子进程先死、父进程后收尸，直接取走退出码。
+
+    新增系统调用号：FORK=7、GETPID=8、WAIT=9（kernel/syscall.h）。
+    验收脚本：bash build/qemu_verify_fork.sh（3 屏：提示符 / elf fork / elf 回归）
+              关键行应出现 "M7 PASS" 与 "forks=2  waits=2"。
+
+    ---- elf exec（M8：exec + 按路径装载）----
+    先看程序变成了文件：
+      ls /bin
+        -> execdemo.elf 5496   forkdemo.elf 6688   hello.elf 4744
+    这三个 ELF 是启动时由 fs/initrd.c 从内核镜像里铺进 ramfs 的（相当于 Linux 的 initrd）；
+    /bin 按 Linux 惯例对所有人可读（ramfs 没有 mode 位，按"根下 bin 子树"判断），
+    所以普通用户 zh 也能执行。
+
+      用法：elf exec
+    它做的事：从 ramfs 按路径打开 /bin/execdemo.elf -> 建进程 -> 该进程自己
+    exec("/bin/hello.elf") -> 同一个 pid 里跑的就是 hello 了。
+      一屏输出：
+        M8 exec demo: load /bin/execdemo.elf from ramfs, it will exec /bin/hello.elf
+          opened    : /bin/execdemo.elf  5496 bytes  (read by path, no fd table yet)
+          created   : pid 0  entry 0x00000000400000c0  pages 1
+        run: the process will print its pid, then replace itself via exec()
+        exec demo: pid 0 is about to exec /bin/hello.elf
+                   (this process image is about to be replaced)
+        [kernel] exec: pid 0 image replaced (fresh address space)
+        [kernel] exec: entry=0x0000000040000000 cr3=0x0000000000382000
+        hello from a real ELF64 binary (M6)
+          after run        : pid 0  state=DEAD  exit code=42  execs=1  faults=0
+        M8 PASS: ...
+
+    它验证的是 exec 的语义：
+      - ELF 是按**路径**从文件系统读的（不再是内核里某个 blob 的符号地址）；
+      - 同一个 pid 的映像被整体换掉：TCB 的 space/cr3/entry/stack_pa 全换成新的，
+        并把中断帧的 rip 改成 e_entry、rsp 改成新栈顶、通用寄存器清零 ——
+        于是 int 0x80 返回后那条 iretq 直接落在新程序入口，旧程序再也回不来；
+      - 退出码 42 是 hello 给的（execdemo 失败会退 9），说明跑着的确实是新映像；
+      - 成功时 exec **没有返回值** —— 因为"调用 exec 的那段代码"本身已被替换掉，
+        这正是 exec 和 fork 最大的区别（fork 返回两次，exec 一次都不返回）。
+
+    实现：kernel/syscall.c 的 sys_exec()（逐字节拷路径 + ramfs_read_file + 64KB 内核缓冲）
+          kernel/task.c 的 task_exec_current()（新地址空间 + elf_load_into + 改中断帧 + mov cr3）
+    新增系统调用号：EXEC=10（kernel/syscall.h）。
+    已知限制：没有 argv/envp、没有 fd 表、没有权限位、没有 PT_INTERP，
+              且 exec 换下来的旧地址空间不回收（每 exec 一次泄漏一套页表 + 几页）。
+    验收脚本：bash build/qemu_verify_exec.sh（3 屏：ls /bin / elf exec / elf fork 回归）
+              关键行应出现 "M8 PASS" 与 "exec: pid"。
+
+[37] fd（M9：每进程 fd 表）
+    用法：fd
+    做的事：从 ramfs 装载 /bin/fddemo.elf 建进程，然后**用户程序自己**去打开文件。
+    内核只提供三个门：OPEN(11) / READ(12) / CLOSE(13)；真正维护状态的是 TCB 里的 fd 表
+    （ZH_MAX_FDS=8 项，每项 = { 用了没, 指向哪个 ramfs 节点, 读偏移 }）。
+    一屏输出：
+      fd demo: I am a ring3 program, I will open/read/close myself
+        open("/bin/hello.elf") -> fd 0
+        read(fd, 4) -> 4 bytes: 7f 45 4c 46
+        ^ 7f 45 4c 46 = ELF magic, the fd really reached the file
+        read(fd, 4) again -> 4 bytes: 02 01 01 00  (offset moved, not the magic again)
+        close(fd) -> 0
+        read(fd) after close -> -1 (fd is dead, as expected)
+        open("/bin/nope.elf") -> -1 (no such file)
+        open("/bin") -> -1 (it is a directory, not a file)
+      fd demo: all five checks passed
+        fd table of the process (ZH_MAX_FDS=8):
+          open ok=1  open denied=2  read=2  close=1
+        after run        : state=DEAD  exit code=0  faults=0
+      M9 PASS: ...
+
+    它验证的是 fd 的语义（与 Linux 对齐的三点）：
+      - fd 是**下标**不是指针：用户只拿到 0、1、2…，越界/伪造的 fd 一律 -1；
+      - 读偏移挂在 fd 上（相当于 struct file 的 f_pos），所以第二次 read 读到的是
+        魔数之后的字节，而不是又从头读一遍；
+      - close(fd) 之后同一个 fd 立即失效（再 read 返回 -1）；
+      - open 一个目录 / 一个不存在的路径都会失败（类型与存在性检查在 ramfs 里做）。
+    另外 fork 出来的子进程会继承父进程的 fd 表（file_table_clone），
+      与 Linux"fork 后父子共享已打开文件"的最小版本一致。
+    程序自检五项全过才 exit(0)；`fd` 命令再按内核计数器（open ok / denied / read / close）
+      二次核对，两边对不上就判失败 —— 用户说"我读到了"必须和内核说"你确实读过"一致。
+    已知限制：只读（没有 creat/write/unlink）、没有 dup/pipe/lseek、没有 O_* 标志位，
+      sys_write 仍然只写屏幕。
+    验收脚本：bash build/qemu_verify_fd.sh（3 屏：ls /bin / fd / elf exec 回归）
+              关键行应出现 "M9 PASS" 与 "open ok="。
+
+[38] wr（M10：可写文件）
+    用法：wr
+    做的事：从 ramfs 装载 /bin/wrdemo.elf，然后**用户程序自己**建文件、写文件、读回来。
+    新增系统调用：CREAT(14) / FWRITE(15) / UNLINK(16)。
+      - creat：父目录可写才允许；不存在就建、存在就清空（等价 Linux creat(path,0666)）。
+      - write：追加写（ramfs_node_append 重新分配 + 拷旧 + 接新 + 释放旧），
+        所以内容真的进了文件系统，别的进程 open 能读到。
+    一屏输出：
+      wr demo: a ring3 program creates and writes a real file
+      [kernel] creat: /home/zh/m10.txt -> fd 0
+        creat("/home/zh/m10.txt") -> fd 0
+      [kernel] write: 30 bytes appended to fd 0
+        write(fd, 30 bytes) -> 30
+      [kernel] write: 38 bytes appended to fd 0
+        write(fd, 38 bytes) -> 38   (appended, the file grew)
+        close(fd) -> 0
+        open("/home/zh/m10.txt") again -> fd 0
+        read back -> 68 bytes:
+      hello from a ring3 file write
+      this line was appended by the same fd
+      wr demo: the bytes read back are exactly the bytes I wrote
+        after run        : state=DEAD  exit code=0  faults=0
+        fs counters      : creat=1  writes=2  bytes=68  opens=1
+      M10 PASS (files): ...
+    PASS 之后紧接着在同一次开机里执行 `cat /home/zh/m10.txt`，应当看到同样两行 ——
+      这证明内容留在 ramfs 里，而不是程序自己的内存里。
+
+[39] spawn（M10：fork -> exec -> wait）
+    用法：spawn
+    做的事：装载 /bin/spawndemo.elf，由用户程序完成 Linux shell 执行一条外部命令的三步：
+      pid = fork();
+      if (pid == 0) exec("/bin/hello.elf");   // 子进程换成新程序（连 mm 一起换）
+      else          wait(&code);              // 父进程进 TASK_WAIT，等退出码
+    一屏输出：
+      spawn demo: pid 0 will fork, the child will exec, the parent will wait
+      [kernel] fork: pid 0 -> pid 1  copied pages=2  child cr3=0x00000000003ad000
+      [parent] fork returned child pid 1
+      [kernel] wait: pid 0 blocks until pid 1 exits
+      [child ] fork returned 0, I am pid 1, now replacing myself with hello.elf
+      [kernel] exec: pid 1 image replaced (fresh address space)
+      [kernel] exec: entry=0x0000000040000000 cr3=0x00000000003b3000
+      hello from a real ELF64 binary (M6)
+      [parent] wait() -> 42   (child 1 collected)
+      spawn demo: fork -> exec -> wait closed the loop in one process tree
+        after run        : state=DEAD  exit code=0  faults=0
+        kernel counters  : forks +1  execs +1  waits +1
+      M10 PASS (processes): ...
+    看点：两处 cr3 不同（fork 给子进程一套、exec 又换一套），说明"子进程的地址空间"
+      与"父进程的地址空间"是两回事；而父进程拿到的 42 是 hello 的退出码 —— exec 之后
+      新映像的 exit 才算数。
+    验收脚本：bash build/qemu_verify_m10.sh（4 屏：wr / cat / spawn / fd 回归）
+              关键行应出现 "M10 PASS" 与 "wait() -> 42"。
+    已知限制：没有 argv/envp（exec 只能带路径），没有信号（父进程只能 wait），
+      没有 dup/pipe/seek，没有 inode 权限位。
 
 
 ----- FAT16 只读挂载（27-29，B 组第 3 个功能）-----
@@ -272,20 +614,20 @@
    cd ~/zh_OS
    ./setup.sh                 # 首次：安装依赖并写入 env.mode
    ./check.sh                 # 只读体检：打印 gcc/nasm/grub-mkrescue/xorriso/qemu 版本
-   ./build.sh                 # 编译内核并用 grub-mkrescue 生成 zh_OS-0.1beta.iso
+   ./build.sh                 # 编译内核并用 grub-mkrescue 生成 zh_OS-0.2beta.iso
 
  三种启动方式（按需选择）:
    # 1) 最小启动：无磁盘，账户走内存态
-   qemu-system-x86_64 -cdrom zh_OS-0.1beta.iso -m 128
+   qemu-system-x86_64 -cdrom zh_OS-0.2beta.iso -m 128
 
    # 2) 用户表持久化：再挂一块可写磁盘
    dd if=/dev/zero of=disk.img bs=1M count=16
-   qemu-system-x86_64 -cdrom zh_OS-0.1beta.iso \
+   qemu-system-x86_64 -cdrom zh_OS-0.2beta.iso \
      -drive file=disk.img,format=raw,if=ide -m 128
 
    # 3) 再加一块 FAT16 数据盘（主通道从盘 index=1）
    ./build/mkfat16_img.sh      # 生成 32MB data.img，含 hello.txt / zh.txt / sub/
-   qemu-system-x86_64 -cdrom zh_OS-0.1beta.iso \
+   qemu-system-x86_64 -cdrom zh_OS-0.2beta.iso \
      -drive file=disk.img,format=raw,if=ide \
      -drive file=data.img,format=raw,if=ide,index=1 -m 128
 
@@ -293,7 +635,7 @@
    strings build/zh_OS.elf | grep -E 'Welcome back|built-in commands|fat16 mounted|ATA primary'
 
  把 ISO 复制到 Windows 桌面（供 VirtualBox / VMware 使用）:
-   cp zh_OS-0.1beta.iso /mnt/c/Users/你的用户名/Desktop/
+   cp zh_OS-0.2beta.iso /mnt/c/Users/你的用户名/Desktop/
 
  可选编译开关:
    ZH_VGA_SELFTEST=1 ./build.sh    # 编入启动时的 16 色前景自检（默认关闭）
@@ -330,4 +672,456 @@
  * 没有用户态、进程、SMP、定时器时间戳之外的调度；Shell 运行在 ring 0。
  * VGA 文本模式为 CP437，屏幕上的内核输出必须是 ASCII；中文只出现在注释与文档中。
  * 已知限制的完整列表见 README.md「已知限制」一节。
+
+[40] argv（M11：exec 携带 argc/argv）
+--------------------------------------------------------------------------------
+  作用：父进程 fork 出子进程，子进程 exec 同一个程序但带三个参数
+        {"argvdemo","alpha","beta"}；新映像的 _start(argc, argv) 把 argc 与每个
+        argv 打印出来再 exit(0)。父进程 wait 收到 0。
+
+  内核做了什么（M11 的核心）：
+    1) sys_exec 现在是 (path, argv_ptr, argc)：先读用户态的指针数组（每个指针
+       都过 user_ptr_ok），再逐字节把每个字符串拷进内核 g_exec_args[8][97]；
+    2) task_exec_current_argv() 建新地址空间 + 新栈页后，把字符串写进新栈页的
+       底部（页帧恒等映射，所以直接按物理地址写），指针值用虚拟地址；
+    3) 指针数组 16 字节对齐接在字符串后面，末尾一个 NULL；
+    4) 改中断帧：rip=新入口、rsp=新栈顶、rdi=argc、rsi=&argv[0]；
+    5) argv=NULL 时等于老的 exec(path)，老程序不受影响。
+
+  顺带修掉的两个内核必修项（都不是程序写错）：
+    * CR4.OSFXSR / OSXMMEXCPT 没开 —— ring3 执行 gcc 自动向量化出的 SSE 指令
+      （movq (%rip),%xmm0 / movaps）会直接 #UD（vector 6）；
+    * 用户栈顶 16 对齐 —— gcc 假定函数是被 call 进来的（入口 rsp ≡ 8 mod 16），
+      对齐不对 movaps %xmm0,(%rsp) 就是 #GP（vector 13）。栈顶改成 SPAN-8。
+
+  预期输出（关键行）：
+    [kernel] exec: pid 1 image replaced (fresh address space)
+    [child ] I was exec()d with argc=3  (pid 1)
+              argv[0] = "argvdemo"
+              argv[1] = "alpha"
+              argv[2] = "beta"
+    [parent] wait() -> 0
+    M11 PASS: exec() carried argc=3 and argv[] into the new image.
+
+  验收：bash build/qemu_verify_argv.sh     -> build/argv_verify/（2 屏）
+        全量回归 bash build/regress_all.sh  -> M2/M4/M5/M6/M7/M8/M9/M10/M11
+
+
+[41] mm（M12：地址空间回收）
+--------------------------------------------------------------------------------
+  作用：证明 exec 换下来的旧 mm 真的被销毁了。跑 /bin/reexec.elf，它靠 argv
+        把"剩余深度"传下去，连续 exec 自己 7 次 —— 每次都建一整套新 mm。
+        命令对比运行前后的页帧空闲数：如果回收缺失，7 次要吃掉 40 多帧。
+
+  内核做了什么（M12 的核心）：
+    1) 新增 vmm_space_destroy()：扫私有窗口那一个 PT 的 512 项，把每个
+       PRESENT 项背后的用户页归还分配器；
+    2) 再把 PT / PD / PDPT / PML4 这四帧自己也归还（最容易漏的就是这四帧）；
+    3) 回收点一：exec 换完 CR3 之后销毁旧空间（顺序不能反，否则 #PF、CR2
+       等于刚释放的地址）；
+    4) 回收点二：命令之间的 task_reset() 统一回收所有残留任务的 mm。
+
+  预期输出（关键行）：
+    frames    : total=32736  used=3015  free=29721
+    [reexec] pid 0: depth 6  -> exec myself with 5
+    ...
+    [reexec] pid 0: depth 0 reached, no more exec. exiting 0
+    after run : total=32736  used=3023  free=29713
+    execs     : +6   reclaimed: +6 mm / +12 pages
+    free      : before=29721  after=29713  delta=8
+    M12 PASS: every exec() destroyed the mm it replaced.
+
+  读法：delta=8 就是"最后一个还活着的进程那一套 mm"，与 exec 次数无关；
+        再跑一次 mm，delta 变 6、终点仍是 29713 —— 账稳、不累积。
+
+  注意：第一次跑 mm 曾经报 "leaked 2056 frames"，那不是漏洞而是测量点错了 ——
+        task_init() 第一次调用会一次性分配 8MB 用户窗口池（2048 帧），
+        命令现在先 task_init() 再开始量账。
+
+  验收：bash build/qemu_verify_m12.sh     -> build/m12_verify/（3 屏）
+        全量回归 bash build/regress_all.sh  -> M2 … M12
+
+
+[42] sh3（M13：shell 降到 ring 3）
+--------------------------------------------------------------------------------
+  作用：把 /bin/zhsh3.elf 当成一个普通进程跑起来。它跑在 CPL=3，屏幕上之后的一切
+        （提示符、读键、回显、拆参数、fork/exec/wait）都由它自己完成。
+        在它里面敲 exit 回到内核 shell。
+
+  它凭什么能当 shell（三条新系统调用）：
+    * SYS_READKEY 17：从键盘环形缓冲取一个字符；空了返回 0，用户态自己 sleep 再问
+    * SYS_CHDIR   18：转发 ramfs_chdir()
+    * SYS_GETCWD  19：把当前目录拷进用户缓冲
+  其余全靠 M1-M12 的老调用：PUTC 5 / SLEEP 6 / FORK 7 / WAIT 9 / EXEC 10 / EXIT 3。
+
+  内置命令（shell 进程自己实现）：help / exit [n] / echo <words> / pwd / cd <dir>
+  [M18] 另加作业控制三个：jobs / fg <n> / bg <n>
+  其余都当外部程序：不带 / 的名字拼成 /bin/<名字>.elf，带 / 的按原路径。
+
+  [M18] 作业控制（在 sh3 里）：
+    ^Z          -> 键盘驱动认出 Ctrl-Z，IRQ1 里 task_signal_foreground(SIGTSTP)
+                   -> 前台进程 TASK_STOP（pick_next 不再挑它），屏幕 tick 立刻停
+                   -> 父进程的 waitpid(pid, WUNTRACED) 立刻返回 0x10000|20
+                   -> 打印 [1] Stopped   jobdemo ，进程**还在内存里**
+    jobs        -> 逐个 SYS_GETSTATE(pid)：Stopped / Running / Done
+    fg 1        -> kill(pid, SIGCONT)（内核直接放回就绪队列）+ SETFG + waitpid
+                   进程从**被停住的那一行**接着跑（frame 一直在 TCB 里）
+    bg 1        -> 只发 SIGCONT，不 wait，回提示符（它在后台继续跑）
+    ^C          -> SIGINT：装了 handler 就跑 handler（sigcatch），没装就 130 死掉
+
+  [M18] 两个新程序：
+    /bin/sigcatch.elf  signal(SIGINT, handler) + 蹦床 + SYS_SIGRETURN
+    /bin/jobdemo.elf   长跑靶子（每 2 秒一行 tick），^Z/fg/bg/^C 都拿它演
+
+  预期输出（关键行）：
+    M13 ring-3 shell: /bin/zhsh3.elf will run in user mode (CPL=3)
+    zhsh3: I am a real ring-3 program (pid 0), reading the keyboard one key at a time
+    zh3:~$ help
+    zh3:~$ echo hello from ring3
+    hello from ring3
+    zh3:~$ cd /bin
+    zh3:/bin$ hello
+    hello from a real ELF64 binary (M6)
+    zh3:~$ exit
+    M13 PASS: the shell itself ran in ring 3 and its commands were real processes.
+
+  提示：敲不存在的名字（比如 argv，真正的程序叫 argvdemo）会看到
+        "cannot exec (no such program in /bin)" 和 [xxx exited 127] —— 这是对的。
+
+  验收：bash build/qemu_verify_m13.sh     -> build/m13_verify/（4 屏）
+        全量回归 bash build/regress_all.sh  -> M2 … M18
+
+
+[附] /bin 里的用户态 ls 与 cat（M14）
+--------------------------------------------------------------------------------
+  在 ring3 shell（sh3）里，ls / cat 是 /bin 下的真程序（走 fork->exec->wait），
+  不是内核里的 cmd_ls/cmd_cat。它们靠 SYS_READDIR 20 与 SYS_OPEN/READ/CLOSE 干活。
+
+  zh3:~$ ls            列当前目录（无参时用 SYS_GETCWD 取路径）
+  zh3:~$ ls /bin       列指定目录
+  zh3:~$ cat /home/zh/m10.txt
+
+  SYS_READDIR 20 的 ABI（三参数位，缓冲固定 64 字节）：
+    rdi = 目录路径（NULL/空串 = 当前目录），rsi = 序号，rdx = 名字缓冲
+    返回 0 = 文件，1 = 目录，-1 = 枚举结束 / 不是目录 / 越权
+
+  验收：bash build/qemu_verify_m14.sh   -> build/m14_verify/（3 屏）
+
+
+[43] cow（M15：写时复制 fork）
+--------------------------------------------------------------------------------
+  作用：跑 /bin/cowdemo.elf，然后用三个计数器把"fork 到底付了什么钱"摆出来。
+
+  机制：fork 不再复制页，只把父进程的帧以"只读 + PTE 第 9 位 COW"映射进子进程，
+        并把父进程那一项也改成只读；谁写谁触发 #PF，vmm_cow_fault() 那一刻才
+        申请新帧、拷 4KB、改成可写。帧有引用计数，减到 0 才真的回分配器。
+
+  预期输出（关键行）：
+    M15 copy-on-write: fork() shares pages, only writes pay for a copy
+    [parent] after my write: g_value=0x00005555  writes=0x00000001
+    [child ] after my write: g_value=0x0000aaaa  writes=0x00000001
+    [parent] after the child is gone, my page still reads 0x00005555
+    fork      : shared=2 page(s) mapped read-only+COW  (0 frames copied at fork)
+    on write  : copied=4  page fault(s)=4  (only the pages each side wrote)
+    M15 PASS: ...
+
+  读法：shared 是 fork 时共享的页数，copied 是"因为有人写才复制"的页数。
+        父子都不写 -> copied=0，fork 的用户页成本是 0 帧。
+
+  注意：这条命令会顺带把内核日志关掉（task_set_exec_verbose(0) + syscall_set_write_log(0)），
+        否则 fork/exec 的逐条日志会把统计挤出屏幕。
+
+  验收：bash build/qemu_verify_m15.sh   -> build/m15_verify/（3 屏：cow / mm / sh3）
+        全量回归 bash build/regress_all.sh  -> M2 … M15
+
+
+[44] demand（M16：按需分页）
+--------------------------------------------------------------------------------
+  作用：跑 /bin/demanddemo.elf。它声明 64KB 的 .bss（16 页），只碰 5 / 10 / 15 三页。
+        装载器现在对纯 .bss 页不分配帧，只登记"将来是零"，第一次访问才给一帧。
+
+  两个账本（别混）：
+    mapped pages          真的映射了（有 PTE、有帧）
+    registered-on-demand 答应了但还没给（desire[] 里有标记、没 PTE）
+
+  预期输出（关键行）：
+    image     : segments=1  mapped pages=1  registered-on-demand=16
+    [demand] 64 KB .bss = 16 pages registered, 0 frames paid at load time.
+    [demand] read  page 5 -> 0   (first touch: #PF -> a fresh zero page appeared)
+    [demand] 3 of 16 pages materialised; the other 13 never took a frame.
+    cost@load : 8 frames (page tables + the file-backed pages only)
+    cost@run  : 3 frames (only the pages the program actually touched)
+    demand    : faults=3  pages materialised=3
+    M16 PASS: ...
+
+  注意：读也会触发 #PF（按需分配不分读写）。所以"遍历 16 页检查它们都是 0"这种验证
+        本身就会把 16 页全买回来 —— demo 因此只碰 3 页，而且是跳着碰。
+
+  验收：bash build/qemu_verify_m16.sh   -> build/m16_verify/（3 屏：demand / cow / sh3）
+        全量回归 bash build/regress_all.sh  -> M2 … M16
+
+[45] sig（M17：信号 + waitpid + Ctrl-C）
+--------------------------------------------------------------------------------
+  作用：两段。
+        1) 在内核里造一个 /bin/spin.elf 的自旋进程，**还没跑**就 kill(pid, SIGKILL)：
+           它第一次从内核回 ring3 时被 128+9=137 杀掉，term_sig=9。
+        2) 跑 /bin/sigdemo.elf（父子都在 ring3）：子进程纯自旋（零系统调用），
+           父进程 sleep 30 tick 后 kill(child, SIGKILL)，再 waitpid(child) 拿回 137。
+
+  关键行：
+    kill(0, SIGKILL) -> queued (pending bit set, nobody interrupted)
+    [kernel] pid 0 terminated by SIGKILL (9), exit code 137
+    killed    : term_sig=9  exit_code=137  sent=1  delivered=1
+    [sigdemo] parent: waitpid(2) = 137
+    M17 PASS: ...
+
+  为什么是 137：Linux 里 exit code = 128 + 信号号（WIFSIGNALED/WTERMSIG 的 shell 表达）。
+  term_sig 与 exit_code 分开记，就像内核里 task->exit_signal 与 exit_code 分开一样。
+
+  Ctrl-C（在 sh3 里）：
+    zh3:/bin$ spin          <- 纯自旋，一个 syscall 都不做
+    按 Ctrl-C ->
+      [kernel] ^C -> SIGINT queued for the foreground process
+      [kernel] pid N terminated by SIGINT (2), exit code 130
+      [spin killed by signal 2 SIGINT, status 130]
+    提示符还在 —— 只杀前台那一个，shell 不受影响。
+
+  实现要点：
+    SYS_WAITPID 21 (int pid)      等指定子进程（-1 = 任意）
+    SYS_KILL    22 (int pid,sig)  只置 pending 位
+    SYS_SETFG   23 (int pid)      shell 把子进程标成前台（pid<0 清空）
+    送达点：interrupt_dispatch 出口（syscall 后 / IRQ 后 / 缺页修好后）-> task_check_signals()
+
+  验收：bash build/qemu_verify_m17.sh -> build/m17_verify/（3 屏：sig / ^C / ls /bin）
+        全量回归 bash build/regress_all.sh -> M2 … M19
+
+
+[46] ext2mount（M19：把 ATA 主通道「主设备」上的 ext2 只读挂上来）
+--------------------------------------------------------------------------------
+  作用：读绝对偏移 1024 处的超级块（扇区 2、3 拼 1024 字节），校验魔数 0xEF53，
+        解析 bs = 1024 << s_log_block_size、块数/inode 数、每组块数/inode 数，
+        再读块组描述符表（s_first_data_block + 1 那个块）拿到第 0 组的 bg_inode_table。
+        最后探一次根 inode（固定 2 号），成功才算挂上。
+
+  磁盘从哪来：QEMU 参数 -drive file=xxx.img,format=raw,if=ide,index=0
+        宿主造镜像：bash build/mk_ext2.sh（内部用 mke2fs -b 1024 + debugfs 塞文件）
+
+  预期输出：
+    ext2 mounted from the primary IDE disk
+  失败时的红字（各不相同，便于定位）：
+    ext2mount: no disk on primary master
+    ext2mount: not an ext2 filesystem (magic != 0xEF53)
+    ext2mount: invalid superblock fields
+    ext2mount: corrupt inode or directory entry
+
+[47] ext2info（把超级块里读到的几何信息摊开）
+--------------------------------------------------------------------------------
+  作用：和宿主 dumpe2fs -h 逐项对照用。
+  预期输出（16MB、bs=1024、双块组的镜像）：
+    === ext2 superblock ===
+    magic      : 0xef53
+    block size : 1024 bytes   blocks=16384
+    inodes     : 4096   first_ino=11   inode_size=256
+    per group  : blocks=8192  inodes=2048
+    gdt block  : 2   inode table block=68
+
+[48] ext2ls [path]（列 ext2 目录）
+--------------------------------------------------------------------------------
+  作用：从根 inode 2 开始逐段 dir_lookup()，命中后 read_inode() 下行，最后遍历目录块。
+        目录项是变长记录：inode(4) rec_len(2) name_len(1) file_type(1，可选) name。
+        file_type 是否存在取决于 s_feature_incompat 的 FILETYPE(0x2) 位 ——
+        这一位决定名字从偏移 8 还是 7 开始，本实现两种都支持。
+        跳过 "." 与 ".."，目录亮蓝带 '/'、文件浅灰、每行 4 个（与 fatls 同一套视觉语言）。
+
+  预期输出：
+    lost+found/  hello.txt  second.txt  big.txt
+    docs/
+    note.txt  extra.txt
+
+  错误：ext2ls: no such file or directory / not a directory /
+        not mounted, run ext2mount first / corrupt inode or directory entry
+
+[49] ext2cat <path>（打印 ext2 文件）
+--------------------------------------------------------------------------------
+  作用：i_block[0..11] 直接块 -> i_block[12] 一级间接 -> i_block[13] 二级间接，
+        就是 ext2 的间接块树（copy_from_pointer_block 用 level 参数表达两级）。
+        先打一行 "ext2cat: <path> (N bytes)"，再吐内容；超过 32KB 亮黄截断。
+
+  预期输出（/hello.txt）：
+    ext2cat: /hello.txt (43 bytes)
+    hello from ext2, a real on-disk filesystem
+
+  预期输出（/big.txt，22420 字节，早过了 12 个直接块；屏幕会被刷掉，末尾仍是证据）：
+    ext2cat: /big.txt (22420 bytes)
+    ... line 400 of a file that lives past the 12 direct blocks
+    TAIL-MARKER-18KB-OK
+
+  验收：bash build/mk_ext2.sh && bash build/qemu_verify_m19.sh
+        -> build/m19_verify/（3 屏：mount / ls / indirect）
+        -> M19 PASS: the kernel walked ext2 from its superblock down to a 22KB file
+
+
+[50] mount <ext2|fat> </dir>（M20：把文件系统挂进同一个 /）
+--------------------------------------------------------------------------------
+  作用：先把底层 FS 挂上（ext2 走 ext2_mount()，fat 走 fat16_mount()），再在 VFS 的
+        挂载表里登记一条 { 挂载点前缀, FS 种类 }。顺序和 Linux 一样：先 superblock，
+        再有 vfsmount。
+
+  例子：
+    mount ext2 /mnt        -> mounted ext2 on /mnt
+    mount fat /fat         -> mounted fat16 on /fat
+
+  红字：
+    mount: ext2mount failed: run ext2mount first to see why     （底层没盘/不是 ext2）
+    mount: fatmount failed: no FAT16 on the primary slave
+    mount: already mounted there                                （同一前缀重复挂）
+    mount: mount point must be an absolute path like /mnt       （必须 / 开头）
+    mount: no free mount slot                                   （VFS_MAX_MOUNTS=4，满了）
+
+[51] umount </dir>（M20）
+--------------------------------------------------------------------------------
+  作用：从挂载表里摘掉这条前缀；如果当前 cwd 正好在被卸的挂载点里（或它的子树里），
+        cwd 自动退回 "/"，避免留下一个悬空的指向。
+  例子：umount /mnt -> unmounted /mnt
+  红字：umount: not a mount point
+
+[52] mounts（M20：看挂载表）
+--------------------------------------------------------------------------------
+  预期输出（挂了一个）：
+    === mount table ===
+      /mnt   -> ext2   (superblock read from the primary IDE disk)
+  空表时黄字：
+    === mount table ===
+      (empty: every path goes to ramfs)
+
+  匹配规则：最长前缀匹配，且前缀之后必须正好是 '\0' 或 '/'（"/mntx" 不会命中 "/mnt"）。
+  没匹配上的路径原样回落 ramfs —— 挂载表空着时，ls/cd/pwd/cat 与 M19 完全一致。
+
+  验收：bash build/qemu_verify_m20.sh -> build/m20_verify/（3 屏）
+        -> M20 PASS: one namespace -- /mnt is ext2, everything else is ramfs
+
+
+[53] ext2create <path> <text...>（M21：真的往磁盘里写一个文件）
+--------------------------------------------------------------------------------
+  作用：把第 2 个参数起的所有文字用空格拼成文件内容，然后：
+        1) 在 inode 位图上分配一个 inode（组 0 跳过 1 号与 s_first_ino 之前的保留项）
+        2) 每个逻辑块在块位图上分配一个物理块并写入内容（尾部补 0）
+        3) 写 inode：mode 0100644 / size / links=1 / i_blocks / 三个时间戳 / i_block[]
+        4) 在父目录里插目录项：找一项"自身长度 + 新项长度 <= rec_len"的，把它的
+           rec_len 砍小，剩下的空间给新项（就是 Linux ext2_add_entry() 的做法）
+        分配与释放同步改三处计数：位图、组描述符、超级块。
+
+  预期输出：
+    created /zhnew.txt  inode 18  32 bytes written to disk
+
+  红字：
+    ext2create: file exists                      同名文件已存在
+    ext2create: no space left on the device      位图没有空块/inode，或内容超过 12 个直接块
+    ext2create: no such file or directory        父目录不存在
+
+  限制（本步故意只做这么多）：只写 12 个直接块（bs=1024 时 12KB），间接块的写留到下一步。
+
+  验收：bash build/qemu_verify_m21.sh（3 屏 + 宿主侧 debugfs/e2fsck 独立验证）
+        -> M21 PASS: the kernel allocated blocks and an inode by itself and wrote a real ext2 file
+
+[54] ext2free（M21：看剩余空间）
+--------------------------------------------------------------------------------
+  作用：重新读一次超级块，打印 s_free_blocks_count 与 s_free_inodes_count。
+        建一个 32 字节目录项 + 1 个数据块的完整过程，屏幕上的证据就是：
+    写前  free blocks 15183   free inodes 4079
+    写后  free blocks 15182   free inodes 4078
+  未挂载时红字：not mounted, run ext2mount first
+
+[55] ext2fill <path> <KB>（M22：写一个必须用间接块的文件）
+--------------------------------------------------------------------------------
+  作用：在内存里生成约 <KB> KB 的正文（每行 "line 000 of the indirect-block
+        write test"），末尾追加一行 END-OF-INDIRECT-WRITE，然后调 ext2_create_big()：
+        12 个直接块走 i_block[0..11]，第 13 块开始分配一个指针块挂在 i_block[12]，
+        指针块里每个 u32 = 一个数据块号（bs=1024 -> 256 个槽），指针攒在内存里
+        最后一次性写回。i_blocks = (数据块 + 1) * (block_size/512)，指针块也算。
+
+  预期输出：
+    wrote /big2.txt  inode 18  18418 bytes, 18 data blocks, indirect ptr block #634
+
+  红字：
+    ext2fill: no space left on the device    超过 12 + block_size/4 块（bs=1024 时 268KB）
+    ext2fill: file exists                    同名文件已存在
+
+  上限：12 个直接块 + block_size/4 个间接块 = bs=1024 时 268KB（<KB> 参数最多取 28）。
+
+  验收：bash build/qemu_verify_m22.sh
+        -> M22 PASS: the write path allocated a pointer block and filled i_block[12]
+  宿主侧证据：
+    debugfs stat -> Size 18418, Blockcount 38, BLOCKS: (0-11):622-633, (IND):634, (12-17):635-640
+    e2fsck -fn   -> 18/4096 files, 1220/16384 blocks，五 Pass 全过
+
+[56] ext2rm <path>（M23：删文件，把东西都还回去）
+--------------------------------------------------------------------------------
+  作用：四步归还，少一步 e2fsck 就会留孤儿块或幽灵 inode：
+        1) 目录项：把被删项的 rec_len 并给前一项（第一项没有前驱时 inode 置 0）
+        2) 数据块：i_block[0..11] 直接释放；[12] 先读指针块、逐个释放它指向的
+           数据块、最后释放指针块本身（顺序反了会漏块）
+        3) inode：i_links_count=0、i_dtime=删除时刻（偏移 0x14，不是 0x08）、
+           i_blocks=0、i_block[] 清零
+        4) 位图与计数：块位图/inode 位图清位，组描述符与超级块的空闲计数各 +1
+
+  预期输出：
+    removed /big2.txt  inode 18  19 blocks freed
+
+  红字：
+    ext2rm: no such file or directory          文件不存在（删第二次就是这句）
+    ext2rm: is a directory (rmdir is not supported yet)   暂不支持删目录
+    ext2rm: corrupt inode or directory entry   位图里该位本来就是 0（重复释放，拒绝执行）
+
+  验收：bash build/qemu_verify_m23.sh（3 屏 + 宿主侧 e2fsck）
+        -> M23 PASS: unlink freed the data blocks, the pointer block and the inode
+  最硬的判据：e2fsck -fn 回到 "17/4096 files, 1201/16384 blocks"，与造镜像时完全一致。
+
+[57] videomode（M25：看看内核拿到了什么屏）
+--------------------------------------------------------------------------------
+  作用：把 Multiboot2 帧缓冲标签（type 8）的信息报出来，顺便算一遍文本行列。
+        没有图形模式时红字提示 "text mode 80x25 (no framebuffer from GRUB)"。
+
+  预期输出（QEMU 默认档）：
+    framebuffer 1280x800x32  pitch 5120
+    text grid 160x50 cells (8x16 font)
+
+  为什么行列是算出来的：图形模式下没有 0xB8000 那套字符发生器，字是内核用
+  8x16 点阵字体一个个像素画上去的。列 = 宽/8，行 = 高/16，换分辨率会自动变。
+
+[58] res <W>x<H> [bpp]（M25：运行时改分辨率）
+--------------------------------------------------------------------------------
+  作用：长模式下已经调不到 int 10h（BIOS 中断只在实模式有），所以直接写
+        Bochs VBE dispi 寄存器组（端口 0x1CE 索引 / 0x1CF 数据）改模式：
+        先读 ID 确认是 0xB0C0..0xB0C5，再写 XRES/YRES/BPP，最后 ENABLE=0x41。
+        ID 不对（真机没有这套接口）就红字拒绝，绝不乱写端口。
+
+  示例：
+  分隔符：宽高之间用字母 x（或星号 *），例如 res 1024x768 / res 1024*768。
+          文档正文里的 "1280x800" 有时写成 1280×800，那是排版用的乘号，命令不认。
+    res 1024x768        32bpp（默认）
+    res 800x600 24      指定色深
+    res 1280x720
+
+  预期输出（成功时立刻重报几何）：
+    framebuffer 1024x768x32  pitch 4096
+    text grid 128x48 cells (8x16 font)
+
+  红字：
+    res: no framebuffer, this kernel is in text mode
+    res: the video device refused that mode
+    res: expected <width>x<height>  (x or *)  /  usage: res <width>x<height>
+
+  启动菜单：第 1 项 = 文本模式 80x25（默认，老命令照旧），第 2 项 = 图形模式。
+        图形模式用的是单独的 build/zh_OS_fb.elf（同一个源码，只多了帧缓冲请求标签）。
+
+  换模式不再清屏（M26）：内核有一层整屏字符缓冲（每格记 字符 + 前后景调色板号），
+        res 之后会把旧屏幕"真正用过的最后几行"搬到新屏幕底部，再按新几何整屏重绘，
+        光标贴底继续往下滚 —— 和 Linux fbcon 换模式的行为一致。缓冲只覆盖可见的一屏，
+        滚出去的历史还没有 scrollback。
+
+  验收：bash build/qemu_verify_m25.sh
+        -> 1280x800（GRUB auto）-> res 1024x768 -> res 800x600
+        screendump 的 PPM 尺寸依次是 1280x800 / 1024x768 / 800x600
+
 ================================================================================

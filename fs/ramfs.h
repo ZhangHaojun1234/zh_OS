@@ -1,7 +1,7 @@
 /* ============================================================================
- * zh_OS 0.1beta (x86_64)
+ * zh_OS 0.2beta (x86_64)
  * File:    fs/ramfs.h
- * Version: 0.1beta
+ * Version: 0.2beta
  * Brief:   ramfs 内存态文件系统接口（节点结构、路径解析、权限判断与命令原型）。
  *
  * 设计要点（B 组第 1 个功能，纯增量「只添加，不修改」）：
@@ -83,6 +83,21 @@ int ramfs_write_file(const char *path, const uint8_t *buf, uint64_t len);
 int ramfs_read_file(const char *path, uint8_t *buf, uint64_t maxlen, uint64_t *outlen);
 
 /* 切换当前目录：目标须为目录且（普通用户）须在 home 子树内。 */
+/* [ADD] M9：fd 表需要的"打开检查 / 取大小 / 按偏移读"三件套。
+ * 与 ramfs_read_file 的区别：这三个不复制整份文件，读偏移由调用方（fd 表）持有。 */
+int ramfs_open_check(const char *path, ramfs_node_t **out);
+uint64_t ramfs_node_size(const ramfs_node_t *node);
+int ramfs_node_read_at(ramfs_node_t *node, uint64_t off, uint8_t *buf,
+                       uint64_t maxlen, uint64_t *outlen);
+
+/* [ADD] M10：可写文件 —— creat（截断/新建）与追加写。 */
+int ramfs_create_file(const char *path, ramfs_node_t **out);
+int ramfs_node_append(ramfs_node_t *node, const uint8_t *buf, uint64_t len);
+
+/* [ADD] M14：按序号枚举目录（getdents 的雏形），给用户态 ls 用。 */
+int ramfs_readdir(const char *path, uint32_t index, char *name, uint32_t cap,
+                  ramfs_type_t *type);
+
 int ramfs_chdir(const char *path);
 
 /* 返回显示用 cwd 路径（静态缓冲，下次调用覆盖）：

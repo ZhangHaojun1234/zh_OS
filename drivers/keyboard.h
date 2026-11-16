@@ -1,7 +1,7 @@
 /* ============================================================================
- * zh_OS 0.1beta (x86_64)
+ * zh_OS 0.2beta (x86_64)
  * File:    drivers/keyboard.h
- * Version: 0.1beta
+ * Version: 0.2beta
  * Brief:   键盘驱动接口声明。
  * ============================================================================ */
 
@@ -21,6 +21,12 @@ char keyboard_getchar(void);
 
 /* 非阻塞探测：缓冲区有字符返回 1。 */
 int keyboard_haschar(void);
+
+/* [ADD] M17：刚刚有没有按 Ctrl-C（读后清零）。非阻塞，给 isr 的 IRQ1 用。 */
+int keyboard_take_ctrl_c(void);
+
+/* [ADD] M18：刚刚有没有按 Ctrl-Z（读后清零）。IRQ1 把它变成 SIGTSTP。 */
+int keyboard_take_ctrl_z(void);
 
 /* [ADD] 扩展键（方向键）特殊事件：扫描码集 1 中 0xE0 前缀后的按下码 */
 enum keyboard_special_key {

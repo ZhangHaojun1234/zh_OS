@@ -1,11 +1,12 @@
 /* ============================================================================
- * zh_OS 0.1beta (x86_64)
+ * zh_OS 0.2beta (x86_64)
  * File:    drivers/vga.c
- * Version: 0.1beta
+ * Version: 0.2beta
  * Brief:   VGA 80x25 彩色文本驱动、滚屏与硬件光标。
  * ============================================================================ */
 
 #include "vga.h"
+#include "fb.h"   /* [ADD] M25：图形模式下转发到 fb.c */
 
 /*
  * VGA 彩色文本模式驱动（80x25，16 色）
@@ -70,6 +71,11 @@ static void set_cursor_shape(void)
 
 void vga_clear(enum vga_color fg, enum vga_color bg)
 {
+    /* [ADD] M25：有帧缓冲时整块显存改由 fb.c 画（文本模式那段原样保留） */
+    if (fb_active()) {
+        fb_clear(fg, bg);
+        return;
+    }
     vga_bg = bg;
     vga_row = 0;
     vga_col = 0;
@@ -121,6 +127,11 @@ void vga_set_cursor(uint32_t row, uint32_t col)
 
 void vga_putchar(char c, enum vga_color fg, enum vga_color bg)
 {
+    /* [ADD] M25：同上，字符交给 fb 的 8x16 点阵渲染 */
+    if (fb_active()) {
+        fb_putchar(c, fg, bg);
+        return;
+    }
     vga_bg = bg;
 
     switch (c) {

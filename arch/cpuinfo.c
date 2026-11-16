@@ -1,7 +1,7 @@
 /* ============================================================================
- * zh_OS 0.1beta (x86_64)
+ * zh_OS 0.2beta (x86_64)
  * File:    arch/cpuinfo.c
- * Version: 0.1beta
+ * Version: 0.2beta
  * Brief:   CPUID 指令封装与 cpuinfo 命令实现。
  *
  * CPUID 位定义参考 Intel SDM 卷 2A 表 3-8（CPUID 叶 1 的 EDX/ECX 特性位）、

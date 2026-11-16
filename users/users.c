@@ -1,7 +1,7 @@
 /* ============================================================================
- * zh_OS 0.1beta (x86_64)
+ * zh_OS 0.2beta (x86_64)
  * File:    users/users.c
- * Version: 0.1beta
+ * Version: 0.2beta
  * Brief:   内存态账户表、FNV-1a 64 哈希、认证与权限（含 ATA 持久化 TODO）。
  * ============================================================================ */
 
@@ -41,7 +41,7 @@
  *
  * 4) 重要限制：从 ISO/CD 启动时介质只读，ata_write_sector() 没有可写目标
  *    （或写失败），持久化不会生效。必须给虚拟机额外挂一块可写磁盘，例如：
- *      qemu-system-x86_64 -cdrom zh_OS-0.1beta.iso
+ *      qemu-system-x86_64 -cdrom zh_OS-0.2beta.iso
  *                         -drive file=disk.img,format=raw -m 128
  *    只有挂载可写磁盘时持久化才有意义。
  *
