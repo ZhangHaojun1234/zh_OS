@@ -1,9 +1,4 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    kernel/elf.c
- * Version: 1.0
- * Brief:   M6 ELF64 装载器：校验头、逐 PT_LOAD 映射并拷贝、设置入口。
- * ============================================================================ */
+/* elf.c - ELF64 装载器：校验头、按 PT_LOAD 逐段映射拷贝、拿 e_entry */
 
 #include "elf.h"
 
@@ -44,7 +39,7 @@ typedef struct {
     uint64_t p_align;
 } elf64_phdr_t;
 
-/* 布局不符就编译失败 —— 这类错在运行时表现为"读出来的字段全是垃圾"，极难查。 */
+/* 布局不符就编译失败 ， 这类错在运行时表现为"读出来的字段全是垃圾"，极难查。 */
 typedef char elf_ehdr_size_check[(sizeof(elf64_ehdr_t) == 64u) ? 1 : -1];
 typedef char elf_phdr_size_check[(sizeof(elf64_phdr_t) == 56u) ? 1 : -1];
 
@@ -87,7 +82,7 @@ static void zero_bytes(uint8_t *dst, uint64_t n)
     }
 }
 
-/* 紧凑十六进制：0x40000000 而不是 0x0000000040000000 —— VGA 只有 80 列，
+/* 紧凑十六进制：0x40000000 而不是 0x0000000040000000 ， VGA 只有 80 列，
  * 满宽 18 个字符会把后面的字段挤到折行，反而看不清。 */
 static void show_hex(uint64_t value)
 {
@@ -286,7 +281,7 @@ int elf_load_into(vmm_space_t *space, const uint8_t *blob, uint64_t size,
 
             /* [ADD] M16：这一页有没有来自文件的内容？
              * have_from/have_to 是"本页 ∩ [p_vaddr, p_vaddr+p_filesz)" 的区间，
-             * 空区间（have_to <= have_from）就是纯 .bss 页 —— 它的内容只有"零"。 */
+             * 空区间（have_to <= have_from）就是纯 .bss 页 ， 它的内容只有"零"。 */
             have_from = (va > ph->p_vaddr) ? va : ph->p_vaddr;
             have_to = va + VMM_PAGE_SIZE;
             if (have_to > ph->p_vaddr + ph->p_filesz) {
@@ -294,14 +289,14 @@ int elf_load_into(vmm_space_t *space, const uint8_t *blob, uint64_t size,
             }
 
             /*
-             * [M16] 纯 .bss 页走"按需"这条路：**不分配帧、不清零**，只在
+             * [M16] 纯 .bss 页走"按需"这条路：不分配帧、不清零，只在
              * desire[] 里记一笔"这一段将来要可写"。用户第一次读写它时才会
              * #PF，vmm_page_fault() 那一刻才给一帧（分配器返回的帧本身就是零）。
              * 这就是为什么装载 64KB 的 .bss 程序不用真的付 64KB 物理内存。
              */
             if (pa == 0u && touched[index] == 0u && have_to <= have_from) {
                 if (vmm_space_want(space, va, VMM_PAGE_SIZE, VMM_WANT_WRITE) == 0) {
-                    /* 注意：**不**加 img->pages —— 这一页并没有被映射，
+                    /* 注意：不加 img->pages ， 这一页并没有被映射，
                      * 它只是"将来会存在"。mapped 与 on-demand 是两个账本。 */
                     if (img->demand_pages == 0u) {
                         img->has_bss = 1u;

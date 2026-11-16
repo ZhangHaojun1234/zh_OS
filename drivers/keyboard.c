@@ -1,9 +1,4 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    drivers/keyboard.c
- * Version: 1.0
- * Brief:   PS/2 键盘 IRQ1 驱动：扫描码映射与 256 字节环形缓冲。
- * ============================================================================ */
+/* keyboard.c - PS/2 键盘 IRQ1：扫描码映射加 256 字节环形缓冲 */
 
 #include "keyboard.h"
 
@@ -12,14 +7,10 @@
 #include "xhci.h"   /* [ADD] M33：USB HID 键盘轮询 */
 
 /*
- * PS/2 键盘驱动（扫描码集 1）
- *
- * 设计要点：
- *   - 中断处理函数 keyboard_handle_irq() 只做两件事：读端口 0x60、把字符放进
- *     256 字节环形缓冲区。绝不阻塞、绝不调用可能睡眠的函数。
- *   - 消费侧 keyboard_getchar() 在缓冲区为空时用 hlt 等待下一次中断，
- *     而不是忙等（busy-wait），这样 CPU 在空闲时真正停下来。
- *   - 缓冲区满时丢弃新字符，避免覆盖尚未读取的数据。
+ * PS/2 键盘驱动，扫描码集 1。
+ * 中断处理 keyboard_handle_irq() 只干两件事：读端口 0x60，把字符塞进 256 字节环形缓冲区，
+ * 不阻塞，也不调可能睡眠的函数。消费侧 keyboard_getchar() 在缓冲区空时用 hlt 等下一次中断，
+ * 不忙等，CPU 空下来真能停住。缓冲区满就丢新字符，不覆盖还没读走的数据。
  */
 
 #define KBD_DATA_PORT   0x60
@@ -195,9 +186,8 @@ void keyboard_handle_irq(void)
     }
 
     /*
-     * CapsLock 只影响字母；Shift 与 CapsLock 同时按下时按 XOR 处理，
-     * 避免先取大写映射、再翻转一次导致大小写颠倒。
-     * 非字母字符只受 Shift 影响（数字 -> 符号等）。
+     * CapsLock 只影响字母。Shift 和 CapsLock 同时按下按 XOR 处理，免得先取大写映射再翻一次，
+     * 把大小写弄反。非字母字符只受 Shift 影响，比如数字变符号。
      */
     /* [ADD] M17：Ctrl-C 不当普通字符送出去，而是变成一个"打断"事件 */
     if (ctrl_down && (ch == 'c' || ch == 'C')) {
@@ -252,9 +242,8 @@ char keyboard_getchar(void)
         if (buffer_pop(&ch)) {
             return ch;
         }
-        /* 缓冲区为空：开中断并 hlt，等下一次 IRQ 唤醒（不忙等）。
-         * PIT（IRQ0，100Hz）会周期性把 CPU 唤醒，于是即使只有一个 USB 键盘，
-         * 上面的轮询也会每 10ms 跑一次。 */
+        /* 缓冲区空：开中断并 hlt，等下一次 IRQ 唤醒，不忙等。PIT（IRQ0，100Hz）会周期性把
+         * CPU 叫醒，所以哪怕只挂了一个 USB 键盘，上面的轮询也每 10ms 跑一次。 */
         __asm__ volatile("sti; hlt");
     }
 }

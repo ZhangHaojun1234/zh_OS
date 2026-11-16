@@ -1,13 +1,6 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    shell/cmd_argv.c
- * Version: 1.0
- * Brief:   M11 `argv` 命令：从 ramfs 装载 /bin/argvdemo.elf 并跑起来。
- *
- * 这一步证明的是：argc/argv 能**跨过 exec 边界** —— 父进程 fork 出子进程，
- * 子进程 exec 同一个程序但带上三个参数，于是新映像的 _start 里 argc=3、
- * argv[1]="alpha" …… 而这些字符串是内核在 exec 时拷进**新**地址空间栈页的。
- * ============================================================================ */
+/* cmd_argv.c - M11 的 argv 命令：从 ramfs 装 /bin/argvdemo.elf 跑起来。要验的是 argc/argv
+ * 能跨过 exec 边界：父进程 fork，子进程 exec 同一个程序但带三个参数，于是新映像的 _start 里
+ * argc=3、argv[1]="alpha"。这些字符串是内核在 exec 时拷进新地址空间栈页的。 */
 
 #include "cmd_argv.h"
 

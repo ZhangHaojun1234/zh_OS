@@ -1,9 +1,4 @@
-/* ============================================================================
- * zh_OS 0.2beta (x86_64)
- * File:    users/users.h
- * Version: 0.2beta
- * Brief:   账户结构、全局会话指针与账户 API 声明。
- * ============================================================================ */
+/* users.h - 账户结构、全局会话指针、账户 API */
 
 #ifndef ZH_OS_USERS_H
 #define ZH_OS_USERS_H
@@ -12,15 +7,11 @@
 #include <stdint.h>
 
 /*
- * 第 4 步：仿 Linux 的账户表（全部内存态）。
- *
- * 设计要点：
- *   - freestanding 环境没有 libc，也不解析 /etc/passwd，账户表是一块静态数组。
- *   - 只保存密码的 64 位 FNV-1a 哈希，绝不保存明文；FNV-1a 不是密码学哈希，
- *     这里仅作教学演示，真实系统应换成加盐的慢哈希。
- *   - zh_current_user 是全局会话指针：NULL 表示未登录，login.c 负责设置/清空。
- *   - 权限规则与 Linux 对齐：uid 0（root）可增删账户、改任何人密码；
- *     普通用户只能改自己的密码。
+ * 第 4 步：仿 Linux 的账户表，全是内存态。freestanding 环境没有 libc，也不解析 /etc/passwd，
+ * 账户表就是一块静态数组。只存密码的 64 位 FNV-1a 哈希，不存明文；FNV-1a 不是密码学哈希，
+ * 这里只作教学演示，真实系统得换成加盐的慢哈希。zh_current_user 是全局会话指针，NULL 表示
+ * 未登录，login.c 负责设置和清空。权限规则跟 Linux 对齐：uid 0（root）能增删账户、改任何人
+ * 的密码，普通用户只能改自己的。
  */
 
 #define ZH_USER_NAME_MAX   32u
@@ -66,23 +57,22 @@ bool user_is_root(void);
 uint32_t user_count(void);
 
 /*
- * 校验用户名与密码：成功返回对应账户指针，失败返回 NULL。
- * 无论用户是否存在都会计算一次哈希，避免用响应时间探测账户名。
+ * 校验用户名和密码，成功返回对应账户指针，失败返回 NULL。不管用户存不存在都算一次哈希，
+ * 免得用响应时间探出账户名有没有。
  */
 zh_user_t *user_auth(const char *name, const char *password);
 
 /*
- * 新增账户，仅 root 可用；重名返回 USER_ERR_EXISTS。
- * home / shell 传 NULL 或空串时自动生成 "/home/<name>" 与 "/bin/zhsh"。
- * password 不能为空。
+ * 新增账户，只有 root 能用，重名返回 USER_ERR_EXISTS。home / shell 传 NULL 或空串时自动给
+ * "/home/<name>" 和 "/bin/zhsh"。password 不能为空。
  */
 int user_add(const char *name, uint32_t uid, uint32_t gid,
              const char *home, const char *shell,
              const char *password, bool is_admin);
 
 /*
- * 修改密码：name 为 NULL / 空串表示改自己。
- * 普通用户只能改自己；root 可改他人。返回 enum user_status。
+ * 改密码，name 为 NULL 或空串表示改自己。普通用户只能改自己，root 能改别人。返回
+ * enum user_status。
  */
 int user_set_password(const char *name, const char *password);
 

@@ -1,9 +1,4 @@
-/* ============================================================================
- * zh_OS 0.2beta (x86_64)
- * File:    shell/cmd_time.h
- * Version: 0.2beta
- * Brief:   uptime / date 两个新命令的入口声明。
- * ============================================================================ */
+/* cmd_time.h - uptime / date 的声明 */
 
 #ifndef ZH_OS_SHELL_CMD_TIME_H
 #define ZH_OS_SHELL_CMD_TIME_H

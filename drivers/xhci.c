@@ -1,15 +1,8 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    drivers/xhci.c
- * Version: 1.0
- * Brief:   [ADD] M33：xHCI 控制器 + HID boot 键盘。
- *
- * xHCI 的三样东西：
- *   命令环 (Command Ring)   —— 软件写 16 字节命令 TRB，敲 doorbell 让控制器取；
- *   事件环 (Event Ring)     —— 控制器写事件 TRB，靠 cycle 位判断有没有新的；
- *   设备上下文 (Device Context) —— 每个 slot 一块：slot ctx + 各端点 ctx。
- * 所有地址都是物理地址（本内核恒等映射，虚拟地址直接可当物理地址用）。
- * ============================================================================ */
+/* xhci.c - M33: xHCI 控制器加 HID boot 键盘，三样东西撑着：
+ * 命令环 ， 软件写 16 字节命令 TRB，敲门铃让控制器来取；
+ * 事件环 ， 控制器写事件 TRB，靠 cycle 位判断有没有新的；
+ * 设备上下文 ， 每个 slot 一块，slot ctx 加各端点 ctx。
+ * 地址都按物理地址使，本内核恒等映射，虚拟地址直接当物理地址。 */
 
 #include "xhci.h"
 
@@ -20,7 +13,7 @@
 #include "pci.h"
 #include "pit.h"
 
-/* ------------------------------ 寄存器 ------------------------------ */
+/* 寄存器 */
 #define XC_CAPLEN      0x00u
 #define XC_HCSPARAMS1  0x04u
 #define XC_HCCPARAMS1  0x10u
@@ -71,7 +64,7 @@
 #define TRB_TC     (1u << 1)
 #define TRB_TYPE_SHIFT 10u
 
-/* ---------------------------- 队列与上下文 ---------------------------- */
+/* 队列与上下文 */
 #define CMD_TRBS   16u
 #define EVT_TRBS   16u
 #define EP0_TRBS   32u
@@ -150,7 +143,7 @@ static void wr64(uint32_t off, uint64_t v)
     *(volatile uint32_t *)(g_bar + off + 4u) = (uint32_t)(v >> 32);
 }
 
-/* ------------------------------ TRB ------------------------------ */
+/* TRB */
 static void trb_write(uint8_t *base, uint32_t idx, uint32_t dw0, uint32_t dw1,
                       uint32_t dw2, uint32_t dw3)
 {
@@ -205,11 +198,11 @@ static void evt_advance(void)
          (uint64_t)phys_of(g_evt_ring + g_evt_deq * 16u) | (1ull << 3));
 }
 
-/* --------------------------- 环推进 --------------------------- */
+/* 环推进 */
 /*
- * 环的最后一项固定是 Link TRB（指回环首、TC=1）。控制器读到它就会跳回开头
- * 并把 cycle 取反；所以软件绕回时也要把 cycle 翻转、并把 Link TRB 按新
- * cycle 重写一遍，否则下一圈第一条 TRB 会被当成"还没轮到"而永远不执行。
+ * 环的最后一项固定是 Link TRB（指回环首、TC=1）。控制器读到就跳回开头并把 cycle 取反，
+ * 所以软件绕回时也要翻转 cycle、按新 cycle 把 Link TRB 重写一遍。不重写的话，下一圈第一条
+ * TRB 会被当成"还没轮到"，永远不执行。
  */
 static void ring_link(uint8_t *base, uint32_t ntrbs, uint32_t cycle)
 {
@@ -225,15 +218,15 @@ static uint32_t ring_next(uint32_t idx, uint32_t *cycle,
     (void)base;
     if (next >= ntrbs - 1u) {
         next = 0u;
-        /* Link TRB 带 TC=1，控制器跳到环首后会自己翻转 cycle；
-         * 软件只要同步翻转自己的 cycle 就行，千万别去改 Link 的 cycle 位
-         * —— 改早了控制器正读到一半，会以为"这条 Link 不属于本轮"而停住。 */
+        /* Link TRB 带 TC=1，控制器跳回环首后会自己翻 cycle，软件只要同步翻自己那份就行。
+         * 千万别去改 Link 的 cycle 位：改早了控制器正读到一半，会以为这条 Link 不属于本轮，
+         * 于是停住。 */
         *cycle ^= 1u;
     }
     return next;
 }
 
-/* --------------------------- 命令环 --------------------------- */
+/* 命令环 */
 static void cmd_doorbell(void)
 {
     *(volatile uint32_t *)(g_bar + g_db) = 0u;   /* target 0 = command ring */
@@ -273,12 +266,12 @@ static int cmd_submit(uint32_t dw0, uint32_t dw1, uint32_t dw2, uint32_t dw3)
     return rc;
 }
 
-/* ------------------------------ 上下文 ------------------------------ */
+/* 上下文 */
 static uint32_t *in_icc(void)  { return (uint32_t *)(g_input_ctx + 0u); }
 static uint32_t *in_slot(void) { return (uint32_t *)(g_input_ctx + 32u); }
 static uint32_t *in_ep(uint32_t dci) { return (uint32_t *)(g_input_ctx + 32u + dci * 32u); }
 
-/* ------------------------------ EP0 控制传输 ------------------------------ */
+/* EP0 控制传输 */
 static int ep0_transfer(uint8_t bmRequestType, uint8_t bRequest,
                         uint16_t wValue, uint16_t wIndex, uint16_t wLength,
                         const uint8_t *out_data, uint8_t *in_data)
@@ -353,7 +346,7 @@ static int ep0_transfer(uint8_t bmRequestType, uint8_t bRequest,
     return rc;
 }
 
-/* ------------------------------ 端口 ------------------------------ */
+/* 端口 */
 static int reset_port(uint32_t port, uint32_t *speed)
 {
     uint32_t off = g_op + OP_PORT_BASE + (port - 1u) * OP_PORT_STRIDE;
@@ -388,7 +381,7 @@ static int reset_port(uint32_t port, uint32_t *speed)
     return 0;
 }
 
-/* ------------------------------ 初始化 ------------------------------ */
+/* 初始化 */
 static int setup_controller(void)
 {
     uint32_t i;
@@ -616,12 +609,11 @@ static int configure_interrupt_ep(uint32_t ep_addr, uint32_t mps, uint32_t inter
 
 /* 给中断端点挂一个 IN 传输：等 8 字节报告 */
 /*
- * 中断端点环：一次只挂一个 IN 传输，取走一个再挂下一个（键盘是低频设备，
- * 10ms 一份报告，完全够用；并发多个反而容易踩"多份报告共用缓冲"的坑）。
- *
- * 绕回时不碰 Link TRB 的 cycle —— 那个窗口里控制器可能正在读 Link，
- * 改了就是"敲几个键后彻底没反应"。走到环尾就重新 Configure Endpoint，
- * 让控制器从一个全新的环首开始（代价是每 255 个键多发一条命令，可接受）。
+ * 中断端点环一次只挂一个 IN 传输，取走一个再挂下一个。键盘是低频设备，10ms 一份报告，
+ * 完全够用，并发多个反而容易踩"多份报告共用缓冲"的坑。
+ * 绕回时不碰 Link TRB 的 cycle：那个窗口里控制器可能正读着 Link，改了就是敲几个键之后彻底
+ * 没反应。走到环尾就重新 Configure Endpoint，让控制器从全新的环首开始，代价是每 255 个键
+ * 多发一条命令，能接受。
  */
 static void intr_arm(void)
 {
@@ -681,9 +673,8 @@ int xhci_init(void)
 
     caplen = (uint32_t)(*(volatile uint8_t *)(g_bar + XC_CAPLEN));
     g_op = caplen & 0xFFu;
-    /* 注意：runtime 区开头是 MFINDEX(0x00)，第一个 interrupter 寄存器组
-     * 从 +0x20 开始（IMAN/IMOD/ERSTSZ/ERSTBA/ERDP 都相对它算）。
-     * 我第一版按 +0x00 算，结果 ERSTSZ 写进了 MFINDEX，
+    /* runtime 区开头是 MFINDEX(0x00)，第一个 interrupter 寄存器组从 +0x20 开始，
+     * IMAN/IMOD/ERSTSZ/ERSTBA/ERDP 都相对它算。我第一版按 +0x00 算，ERSTSZ 写进了 MFINDEX，
      * 事件环压根没登记上，命令全部超时。 */
     g_rt = (rd(XC_RTSOFF) & 0xFFFFFFE0u) + 0x20u;
     g_db = rd(XC_DBOFF) & 0xFFFFFFF8u;
@@ -768,7 +759,7 @@ int xhci_init(void)
 
 int usb_kbd_ready(void) { return g_ready; }
 
-/* ------------------------------ HID 报告 -> 字符 ------------------------------ */
+/* HID 报告 -> 字符 */
 /* usage id 0x00..0x67。只填真正会产生字符的键，其余留 0。 */
 static const char hid_map[104] = {
     [0x04] = 'a', [0x05] = 'b', [0x06] = 'c', [0x07] = 'd', [0x08] = 'e',
@@ -904,7 +895,7 @@ void usb_kbd_poll(void)
     }
 }
 
-/* ------------------------------ 诊断 ------------------------------ */
+/* 诊断 */
 int      xhci_last_error(void)  { return g_err; }
 uint32_t xhci_bar_low(void)     { return g_bar_low; }
 uint32_t xhci_max_ports(void)   { return g_max_ports; }

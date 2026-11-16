@@ -1,9 +1,4 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    kernel/console_hist.c
- * Version: 1.0
- * Brief:   支持上下键历史的行编辑器（原 console.c 一行未改）。
- * ============================================================================ */
+/* console_hist.c - 带上下键历史的行编辑器，console.c 一行没动 */
 
 #include "console_hist.h"
 
@@ -14,24 +9,19 @@
 #include "vga.h"
 
 /*
- * 与 kernel/console.c 的 read_line() 保持一致的处理：
- *   - 静态行缓冲 128 字节、可打印 ASCII(0x20..0x7E) 过滤、退格擦除、回车换行返回。
- *   - 提示符 / 回显 / 擦除所用的颜色与 console.c 的 read_line 完全相同。
- *     当前项目为 Linux 红/黄/绿配色，read_line 的 prompt 是亮绿；
- *     这里跟随同一颜色，不额外引入青色，保证与原行编辑器观感一致。
+ * 处理方式跟 kernel/console.c 的 read_line() 对齐：静态行缓冲 128 字节，只收可打印 ASCII
+ * (0x20..0x7E)，退格就地擦除，回车换行返回。提示符、回显、擦除用的颜色也跟 console.c 的
+ * read_line 完全一样，本项目是 Linux 红黄绿配色，read_line 的 prompt 是亮绿，这里跟着用同一
+ * 个颜色，不额外引青色，观感跟原行编辑器一致。
  *
- * 新增行为：
- *   - 上箭头：history_prev()，先擦掉当前行，再把历史命令填进缓冲并回显。
- *   - 下箭头：history_next()，返回 NULL 时恢复空行。
- *   - 左右箭头：本次实现为忽略（光标始终保持在行尾，不做行内编辑），
- *     注释里保留这个约定；以后实现行内光标时再扩展。
- *   - 等待时同时轮询 keyboard_haschar() 与 keyboard_has_special()，
- *     两者都空才 sti; hlt，因此不会卡死在原 keyboard_getchar() 的阻塞里。
- *   - 回车返回前 history_add(缓冲内容) + history_reset_cursor()，
- *     空行与连续重复命令由 history_add 内部过滤。
+ * 新加的行为：上箭头 history_prev()，先擦掉当前行，再把历史命令填进缓冲并回显；下箭头
+ * history_next()，返回 NULL 时恢复空行；左右箭头这一版忽略，光标始终在行尾，不做行内编辑，
+ * 以后实现行内光标时再扩展。等待时同时轮询 keyboard_haschar() 和 keyboard_has_special()，
+ * 两者都空才 sti; hlt，所以不会卡死在原 keyboard_getchar() 的阻塞里。回车返回前
+ * history_add(缓冲内容) + history_reset_cursor()，空行和连续重复的命令由 history_add 内部过滤。
  *
- * 注意：本文件使用自己独立的静态行缓冲，不复用 console.c 的 line_buffer，
- * 避免两个行编辑器互相覆盖；返回值语义与 read_line 一致（指向静态缓冲）。
+ * 本文件用自己独立的静态行缓冲，不复用 console.c 的 line_buffer，免得两个行编辑器互相覆盖。
+ * 返回值语义跟 read_line 一致，指向静态缓冲。
  */
 
 #define LINE_BUFFER_SIZE HIST_LINE_MAX

@@ -1,9 +1,4 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    kernel/isr.c
- * Version: 1.0
- * Brief:   异常/IRQ 分发、异常信息打印与 EOI。
- * ============================================================================ */
+/* isr.c - 异常和 IRQ 分发、异常现场打印、EOI */
 
 #include "isr.h"
 
@@ -18,11 +13,9 @@
 #include "vmm.h"  // [ADD]  M15 COW：缺页时先尝试自己修好（vmm_cow_fault）
 
 /*
- * 异常与 IRQ 的默认处理。
- *
- * 0..31   CPU 异常：打印异常名与错误码后停住（cli + hlt）。
- * 32..47  硬件 IRQ：若是键盘（IRQ1 对应向量 33）先交给键盘驱动；
- *         其他未注册的 IRQ 只发 EOI 后返回，避免中断被永久屏蔽。
+ * 异常和 IRQ 的默认处理。0..31 是 CPU 异常，打印异常名和错误码后停住（cli + hlt）；
+ * 32..47 是硬件 IRQ，键盘（IRQ1 对应向量 33）先交给键盘驱动，其它没注册的 IRQ
+ * 只发 EOI 就返回，免得中断被永久屏蔽。
  */
 
 #define EXCEPTION_COUNT 32
@@ -85,10 +78,10 @@ static void print_hex64(uint64_t value, uint8_t color)
 
 static int handle_exception(struct regs *r)
 {
-    // [ADD] M15：先给 #PF 一次"自己修好自己"的机会 —— COW fork 之后，
+    // [ADD] M15：先给 #PF 一次"自己修好自己"的机会 ， COW fork 之后，
     //  父子共享的页是只读的，谁写谁就会在这里收到一次 #PF；
     //  vmm_cow_fault() 复制一份、改成可写，然后我们直接返回 ring3 重新执行那条写指令。
-    //  修好之后**不能**往下走（下面是要杀任务/panic 的路径）。
+    //  修好之后不能往下走（下面是要杀任务/panic 的路径）。
     if (r->vector == 14u && task_sched_active()) {
         uint64_t cr2_value;
         __asm__ volatile("mov %%cr2, %0" : "=r"(cr2_value));
@@ -98,7 +91,7 @@ static int handle_exception(struct regs *r)
     }
 
     // [ADD] M4：如果异常来自 ring3 且调度器正在接管 CPU，那就是"这个任务自己搞死自己"，
-    //        不该 panic 整机 —— 杀掉该任务、换下一个接着跑。CS 的 RPL 位是唯一判据。
+    //        不该 panic 整机 ， 杀掉该任务、换下一个接着跑。CS 的 RPL 位是唯一判据。
     if ((r->cs & 3u) == 3u && task_sched_active()) {
         task_fault(r);   /* 不返回：把 CPU 交给下一个任务 */
     }
@@ -179,15 +172,13 @@ static void handle_irq(struct regs *r)
         /* IRQ1：PS/2 键盘。驱动内部只做入队，不做阻塞操作。 */
         keyboard_handle_irq();
 
-        /* 坑（这轮踩了）：EOI 必须**先**发。第一次写这一支时把 return 放在
-         * pic_send_eoi() 之前，结果键盘只响应第一个键、之后整条线被屏蔽 ——
-         * 现象是登录界面敲完第一个字符就死了。 */
+        /* 这轮踩的坑：EOI 必须先发。第一次写这一支把 return 放在 pic_send_eoi() 前面，
+         * 结果键盘只响应第一个键、之后整条线被屏蔽，现象是登录界面敲完第一个字符就死了。 */
         pic_send_eoi(irq);
 
-        /* [ADD] M17：Ctrl-C 不产生字符，而是给前台进程投一个 SIGINT。
-         * 这里只投递（置 pending 位），真正送达在 interrupt_dispatch 出口的
-         * task_check_signals() —— 也就是 Linux 的"中断里 send_sig，
-         * 出门回用户态时才 kill 自己"。 */
+        /* [ADD] M17：Ctrl-C 不产生字符，改成给前台进程投一个 SIGINT。这里只投递，置 pending
+         * 位，真正送达在 interrupt_dispatch 出口的 task_check_signals()，也就是 Linux 那套
+         * "中断里 send_sig，出门回用户态时才 kill 自己"。 */
         if (keyboard_take_ctrl_c()) {
             if (task_signal_foreground(ZH_SIGINT) == 0) {
                 sh_print(SH_WARN, "[kernel] ^C -> SIGINT queued for the foreground process");

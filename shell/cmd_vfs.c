@@ -1,13 +1,6 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    shell/cmd_vfs.c
- * Version: 1.0
- * Brief:   VFS 的 3 个 Shell 命令：mount / umount / mounts（M20）。
- *
- * 纯增量：本文件是新文件，命令表在 commands.c 末尾追加。
- * mount 只登记挂载点，不负责探测设备 —— 底层 FS 已经由 ext2mount / fatmount 挂好了，
- * 这正好对应 Linux 里 "先有 super_block，再有 vfsmount" 的顺序。
- * ============================================================================ */
+/* cmd_vfs.c - M20 的三个命令 mount / umount / mounts。mount 只登记挂载点，不探测设备，底层
+ * 文件系统早由 ext2mount / fatmount 挂好了，正好对上 Linux 里先有 super_block 再有 vfsmount
+ * 的顺序。 */
 
 #include "shell.h"
 #include "vga.h"
@@ -47,9 +40,7 @@ static void emit_reason(const char *cmd, const char *reason)
     sh_println(SH_ERR, buf);
 }
 
-/* ------------------------------------------------------------------ */
 /* mount <ext2|fat> <dir>                                             */
-/* ------------------------------------------------------------------ */
 
 int cmd_mount(int argc, char **argv)
 {
@@ -98,9 +89,7 @@ int cmd_mount(int argc, char **argv)
     return SHELL_CONTINUE;
 }
 
-/* ------------------------------------------------------------------ */
 /* umount <dir>                                                       */
-/* ------------------------------------------------------------------ */
 
 int cmd_umount(int argc, char **argv)
 {
@@ -122,9 +111,7 @@ int cmd_umount(int argc, char **argv)
     return SHELL_CONTINUE;
 }
 
-/* ------------------------------------------------------------------ */
 /* mounts：列出挂载表                                                 */
-/* ------------------------------------------------------------------ */
 
 int cmd_mounts(int argc, char **argv)
 {

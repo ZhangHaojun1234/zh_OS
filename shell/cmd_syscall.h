@@ -1,9 +1,4 @@
-/* ============================================================================
- * zh_OS 0.2beta (x86_64)
- * File:    shell/cmd_syscall.h
- * Version: 0.2beta
- * Brief:   M2 系统调用：syscall 命令声明。
- * ============================================================================ */
+/* cmd_syscall.h - syscall 命令的声明 */
 
 #ifndef ZH_OS_CMD_SYSCALL_H
 #define ZH_OS_CMD_SYSCALL_H

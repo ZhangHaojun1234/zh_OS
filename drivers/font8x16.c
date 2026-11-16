@@ -1,13 +1,6 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    drivers/font8x16.c
- * Brief:   8x16 等宽点阵字体（ASCII 32..126，95 个字形），[ADD] M25。
- *
- * 数据从 Linux 控制台字体转来（PSF2 -> 每字形 16 字节，每字节一行 8 像素）。
- * 生成脚本：build/mkfont.py，重生成：
- *   python3 build/mkfont.py /usr/share/consolefonts/Lat15-Fixed16.psf.gz \
- *           drivers/font8x16.c
- * ============================================================================ */
+/* font8x16.c - 8x16 等宽点阵字体，ASCII 32..126 共 95 个字形。
+ * 数据从 Linux 控制台字体转来（PSF2，每字形 16 字节，一字节一行 8 像素），
+ * 重新生成：python3 build/mkfont.py /usr/share/consolefonts/Lat15-Fixed16.psf.gz drivers/font8x16.c */
 
 #include "font8x16.h"
 

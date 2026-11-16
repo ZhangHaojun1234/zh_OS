@@ -1,12 +1,5 @@
-/* ============================================================================
- * zh_OS 0.2beta (x86_64)
- * File:    arch/cpuinfo.c
- * Version: 0.2beta
- * Brief:   CPUID 指令封装与 cpuinfo 命令实现。
- *
- * CPUID 位定义参考 Intel SDM 卷 2A 表 3-8（CPUID 叶 1 的 EDX/ECX 特性位）、
- * 表 3-6（叶 1 EAX 的 Family/Model/Stepping 字段拆分）。
- * ============================================================================ */
+/* cpuinfo.c - CPUID 封装和 cpuinfo 命令。特性位定义参考 Intel SDM 卷 2A 表 3-8
+ * （叶 1 的 EDX/ECX），Family/Model/Stepping 的拆法看表 3-6（叶 1 EAX）。 */
 
 #include "cpuinfo.h"
 
@@ -16,12 +9,9 @@
 #include "shell.h"  /* sh_print_u32 / SH_* / SHELL_CONTINUE */
 
 /*
- * 用内联汇编读取 CPUID 叶。
- * leaf/subleaf 为入参，EAX/EBX/ECX/EDX 为出参。
- * 64 位下 RBX 受调用约定保护，GCC 的 =b 输出约束会自动处理其备份/恢复，
- * 因此无需像 32 位内核那样手工保存 RBX。
- * 注意：本内核以 -fno-pic -mcmodel=kernel 编译，EBX 不充当 GOT 指针，
- * 可以直接作为输出操作数使用。
+ * 内联汇编读 CPUID 叶。leaf/subleaf 是入参，EAX/EBX/ECX/EDX 出参。64 位下 RBX 受调用约定
+ * 保护，GCC 的 =b 输出约束会自己备份恢复，不用像 32 位内核那样手工存 RBX。本内核按
+ * -fno-pic -mcmodel=kernel 编译，EBX 不当 GOT 指针，可以直接拿来做输出操作数。
  */
 static inline void cpuid(uint32_t leaf, uint32_t subleaf,
                          uint32_t *a, uint32_t *b, uint32_t *c, uint32_t *d)

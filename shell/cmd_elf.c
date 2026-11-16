@@ -1,9 +1,4 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    shell/cmd_elf.c
- * Version: 1.0
- * Brief:   M6 ELF 装载器：elf 命令（解析嵌入的 hello.elf -> 装载 -> ring3 跑 -> 校验）
- * ============================================================================ */
+/* cmd_elf.c - M6 的 elf 命令：解析嵌进来的 hello.elf，装载、进 ring3 跑、回来校验 */
 
 #include "cmd_elf.h"
 
@@ -14,9 +9,9 @@
 #include "../kernel/task.h"
 
 /*
- * build.sh 用 `ld -r -b binary hello.elf` 把这个 ELF 文件原样嵌成内核里的一个
- * 目标文件，链接器会自动生成三个符号：_start / _end / _size。
- * 这相当于 Linux 的 initrd —— 内核镜像里带着"文件内容"，但没有文件系统。
+ * build.sh 用 ld -r -b binary hello.elf 把这个 ELF 原样嵌成内核里的一个目标文件，链接器会
+ * 自动生成三个符号：_start / _end / _size。相当于 Linux 的 initrd，内核镜像里带着文件内容，
+ * 但没有文件系统。
  */
 extern const uint8_t _binary_hello_elf_start[];
 extern const uint8_t _binary_hello_elf_end[];
@@ -38,9 +33,7 @@ static void show_hex64(uint64_t value)
     sh_print(SH_PLAIN, buf);
 }
 
-/* ------------------------------------------------------------------ */
 /* [M7] `elf fork`：跑 forkdemo.elf，验证 fork / wait / 地址空间复制   */
-/* ------------------------------------------------------------------ */
 
 static int run_forkdemo(void)
 {
@@ -126,9 +119,7 @@ static int run_forkdemo(void)
     return SHELL_CONTINUE;
 }
 
-/* ------------------------------------------------------------------ */
 /* [M8] `elf exec`：按路径从 ramfs 装载，然后让它自己 exec 掉自己      */
-/* ------------------------------------------------------------------ */
 
 static uint8_t g_file_buf[64u * 1024u];
 
@@ -219,7 +210,7 @@ int cmd_elf(int argc, char **argv)
     const task_t *t;
     int pid;
 
-    /* `elf parse`：只解析不装载。目的很实际 —— VGA 文本只有 25 行，
+    /* `elf parse`：只解析不装载。目的很实际 ， VGA 文本只有 25 行，
      * 完整流程的输出会把"解析"那一段滚出屏幕，单独跑一次才看得见。 */
     if (argc >= 2 && argv[1] != 0 && argv[1][0] == 'f') {
         return run_forkdemo();      /* [ADD] M7：elf fork */

@@ -1,9 +1,4 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    kernel/kernel.c
- * Version: 1.0
- * Brief:   内核主入口：初始化各子系统，最后进入登录 + Shell 循环。
- * ============================================================================ */
+/* kernel.c - 内核主入口：初始化各子系统，最后落到登录加 shell 循环 */
 
 #include <stdint.h>
 
@@ -37,21 +32,14 @@ extern void klog_ring(const char *fmt, ...); // [ADD]
 #include "syscall.h"  // [ADD]  M2 系统调用：int 0x80 门与分发器
 
 /*
- * zh_OS 内核入口。
- *
- * 执行状态下述：
- *   GRUB（multiboot2）把控制权交到 boot/boot.asm 的 _start 时，CPU 处于 32 位保护模式。
- *   boot.asm 自行建立临时页表、开启 PAE/LME/分页并远跳进入 x86_64 长模式。
- *   因此进入 kernel_main 时：长模式已激活（由引导代码完成），
- *   而 GDT 与页表在本函数里由内核重新建立（gdt_init / paging_init）。
- *
- * 显示风格模仿 Linux 内核控制台：纯文本、无艺术字，只用 4 种颜色区分日志级别
- * （浅灰 info / 亮绿 ok / 黄 warn / 亮红 err）。时间戳等 PIT 定时器就绪后再加。
- *
- * 第 5 步：中断与键盘就绪后载入内存账户表（user_init），开中断，
- * 然后进入 "登录 -> Shell -> logout -> 重新登录" 的无限循环。
- * login_screen() 负责清屏与认证，shell_run() 负责彩色提示符与命令执行；
- * 内核本身不再解析任何用户输入的命令。
+ * 内核入口。执行状态是这样：GRUB（multiboot2）把控制权交给 boot/boot.asm 的 _start 时
+ * CPU 还在 32 位保护模式，boot.asm 自己建临时页表、开 PAE/LME/分页、远跳进长模式。
+ * 所以进 kernel_main 时长模式已经起来了，GDT 和页表在这函数里重建（gdt_init / paging_init）。
+ * 显示风格照 Linux 内核控制台来：纯文本、不要艺术字，只用 4 种颜色区分级别（浅灰 info /
+ * 亮绿 ok / 黄 warn / 亮红 err），时间戳等 PIT 就绪后再加。
+ * 第 5 步的工作是：中断和键盘就绪之后载入账户表（user_init），开中断，然后进
+ * "登录 -> Shell -> logout -> 重新登录"的无限循环。login_screen() 管清屏和认证，
+ * shell_run() 管彩色提示符和命令执行，内核本身不再解析任何用户输入。
  */
 
 #ifndef ZH_VGA_SELFTEST
@@ -128,11 +116,9 @@ static void print_banner(void)
 }
 
 /*
- * 临时自检函数：16 种前景色各打印一行。
- *
- * 启动时默认不编译（ZH_VGA_SELFTEST=0），保持 Linux 风格的朴素输出。
- * 需要验证调色板时：ZH_VGA_SELFTEST=1 ./build.sh
- * 第 5 步已提供 Shell 的 color 命令（运行时 16 色板），这里保留编译期自检开关。
+ * 临时自检：16 种前景色各打一行。启动时默认不编译（ZH_VGA_SELFTEST=0），保持 Linux
+ * 那种朴素输出。要验调色板时 ZH_VGA_SELFTEST=1 ./build.sh。第 5 步已经有 Shell 的
+ * color 命令（运行时 16 色板），这里只留个编译期开关。
  */
 #if ZH_VGA_SELFTEST
 static void color_selftest(void)
@@ -181,9 +167,7 @@ static void color_selftest(void)
 }
 #endif
 
-/* ------------------------------------------------------------------ */
 /* 第 5 步：命令实现全部移到 shell/commands.c                          */
-/* ------------------------------------------------------------------ */
 
 void kernel_main(uint32_t mb2_magic, uint32_t mb2_info)
 {
@@ -231,7 +215,7 @@ void kernel_main(uint32_t mb2_magic, uint32_t mb2_info)
     color_selftest();
 #endif
 
-    /* ---- 中断子系统：顺序必须是 IDT -> PIC -> 键盘驱动 -> 最后开中断 ---- */
+    /* 中断子系统：顺序必须是 IDT -> PIC -> 键盘驱动 -> 最后开中断 */
     idt_init();
     syscall_init(); // [ADD]  M2 系统调用：给向量 0x80 挂 DPL=3 的门
     klog(LOG_INFO, "idt: 256 entries, vectors 0-47 installed");
@@ -257,10 +241,9 @@ void kernel_main(uint32_t mb2_magic, uint32_t mb2_info)
     __asm__ volatile("sti");
 
     /*
-     * 第 5 步：登录 -> Shell -> logout -> 重新登录，无限循环。
-     * login_screen() 负责清屏、绘制登录横幅并设置 zh_current_user；
-     * shell_run() 负责彩色提示符与命令执行；用户执行 logout 时 shell_run()
-     * 返回，这里重新进入登录流程。shutdown 命令直接停机，不会回到这里。
+     * 第 5 步：登录 -> Shell -> logout -> 重新登录，无限循环。login_screen() 清屏、画登录
+     * 横幅、设 zh_current_user；shell_run() 管彩色提示符和命令执行；用户 logout 时
+     * shell_run() 返回，这里重新进登录流程。shutdown 命令直接停机，走不到这儿。
      */
     /* B 组第 2 个功能：启动期做一次磁盘检测 + 用户表载入（仅一次）。 */
     /* [ADD] M31：先找 AHCI 控制器。找得到，后面 ata_* 就都转给 AHCI；

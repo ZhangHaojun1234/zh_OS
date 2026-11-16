@@ -1,12 +1,5 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    shell/cmd_ramfs.c
- * Version: 1.0
- * Brief:   基于 ramfs 的 7 个 Shell 命令：ls / cd / pwd / cat / mkdir / touch / rm。
- *
- * B 组第 1 个功能，纯增量「只添加，不修改」：本文件为新文件，命令表在
- * commands.c 末尾追加注册，行为、颜色均按任务要求，不改动任何既有命令。
- * ============================================================================ */
+/* cmd_ramfs.c - 基于 ramfs 的七个命令：ls / cd / pwd / cat / mkdir / touch / rm。
+ * 命令表在 commands.c 末尾追加，行为和颜色按任务要求来，既有命令一行没动。 */
 
 #include "shell.h"    /* SHELL_CONTINUE / sh_println / err / warn / 输出宏 */
 #include "vga.h"      /* vga_print / vga_putchar / enum vga_color */
@@ -71,9 +64,7 @@ static bool ends_with(const char *s, const char *suffix)
     return true;
 }
 
-/* ------------------------------------------------------------------ */
 /* ls [path]：列目录，4 个一行；目录亮蓝、文件浅灰、.sh(非空)亮绿      */
-/* ------------------------------------------------------------------ */
 
 int cmd_ls(int argc, char **argv)
 {
@@ -167,9 +158,7 @@ int cmd_ls(int argc, char **argv)
     return SHELL_CONTINUE;
 }
 
-/* ------------------------------------------------------------------ */
 /* cd <path>：切换目录，成功静默，失败亮红                            */
-/* ------------------------------------------------------------------ */
 
 int cmd_cd(int argc, char **argv)
 {
@@ -232,9 +221,7 @@ int cmd_cd(int argc, char **argv)
     return SHELL_CONTINUE;
 }
 
-/* ------------------------------------------------------------------ */
 /* pwd：打印当前目录（显示用路径），亮青                              */
-/* ------------------------------------------------------------------ */
 
 int cmd_pwd(int argc, char **argv)
 {
@@ -251,9 +238,7 @@ int cmd_pwd(int argc, char **argv)
     return SHELL_CONTINUE;
 }
 
-/* ------------------------------------------------------------------ */
 /* cat <file>：读取并打印文件内容（浅灰），超过 4KB 截断并亮黄提示    */
-/* ------------------------------------------------------------------ */
 
 int cmd_cat(int argc, char **argv)
 {
@@ -304,9 +289,7 @@ int cmd_cat(int argc, char **argv)
     return SHELL_CONTINUE;
 }
 
-/* ------------------------------------------------------------------ */
 /* mkdir / touch / rm：成功亮绿 "created/removed: <path>"，失败亮红    */
-/* ------------------------------------------------------------------ */
 
 int cmd_mkdir(int argc, char **argv)
 {

@@ -1,9 +1,4 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    kernel/usermode.c
- * Version: 1.0
- * Brief:   M1 用户态：2MB 用户窗口、现场拼机器码、页表 U/S 置位、iretq 进 ring3。
- * ============================================================================ */
+/* usermode.c - 2MB 用户窗口、现场拼机器码、页表 U/S 置位、iretq 降到 ring3 */
 
 #include "usermode.h"
 
@@ -15,25 +10,21 @@
 #include "../shell/shell.h"
 
 /*
- * 为什么用户窗口要 2MB 对齐、且正好 2MB 大？
- *   M1 阶段沿用 paging.c 的"512 个 2MB 大页恒等映射"，还没有 4KB 页表。
- *   2MB 大页的 U/S 位在页目录项上，一置就是 2MB 一起置。
- *   所以让用户窗口独占一个 2MB 大页（对齐 + 整页大小），
- *   这块 2MB 里除了用户代码/栈什么都没有，不会顺带把内核数据暴露给 ring3。
- *   M3 换成 4KB 页表以后，这个限制就消失了（可以按页精确保护）。
- *
- * 代价：.bss 多占 2MB（386 行都是零页，ISO 体积不变），QEMU -m 128 完全够用。
- *       —— M3 之后这个代价没有了：窗口改成运行时从页帧分配器申请。
+ * 用户窗口为什么要 2MB 对齐，而且正好 2MB？M1 阶段还在用 paging.c 那套"512 个 2MB 大页
+ * 恒等映射"，没有 4KB 页表。2MB 大页的 U/S 位在页目录项上，一置就是 2MB 一起置，所以让
+ * 用户窗口独占一个大页，这块里除了用户代码和栈什么都没有，不会顺带把内核数据暴露给 ring3。
+ * M3 换成 4KB 页表以后这个限制就没了，可以按页精确保护。
+ * 代价是 .bss 多占 2MB（386 行全是零页，ISO 体积不变），QEMU -m 128 够用；
+ * M3 之后这个代价也没了，窗口改成运行时从页帧分配器申请。
  */
 
 #define USER_WINDOW_BYTES 0x200000ULL
 
 /*
- * M3 的改动：用户窗口不再是 .bss 里的 2MB 静态数组，而是运行时向
- * mm/phys.c 的页帧分配器要 512 个连续的、2MB 对齐的物理帧。
- *   恒等映射下"物理地址 == 虚拟地址"，拿到的指针可以直接当内存写；
- *   memmap 里也能看到这 2MB 真的被登记为 used（而不是凭空多出来的 .bss）。
- * 页表这一层没变：仍然是 2MB 大页，U/S 位一置就是整 2MB（M5 才换 4KB 页表）。
+ * M3 的改动：用户窗口不再是 .bss 里的 2MB 静态数组，改成运行时向 mm/phys.c 的页帧分配器
+ * 要 512 个连续、2MB 对齐的物理帧。恒等映射下物理地址等于虚拟地址，拿到的指针可以直接当
+ * 内存写；memmap 里也能看到这 2MB 真的登记成 used，而不是凭空多出来的 .bss。
+ * 页表这层没变，还是 2MB 大页，U/S 一置就是整 2MB，M5 才换 4KB 页表。
  */
 static uint8_t *g_user_window;
 
@@ -47,9 +38,7 @@ static uint8_t *g_user_window;
 
 static uint32_t g_code_len;
 
-/* ------------------------------------------------------------------ */
 /* 手写机器码（不引汇编器，直接往用户窗口里铺字节）                   */
-/* ------------------------------------------------------------------ */
 
 static void emit8(uint8_t byte)
 {
@@ -67,11 +56,10 @@ static void emit32(uint32_t value)
 }
 
 /*
- * mov byte ptr [disp32], imm8
- *   64 位模式下 mod=00 / r/m=100 必须配 SIB 字节 0x25（无基址 + 无索引），
- *   后面跟 32 位绝对地址。这正是 ring3 直接改 VGA 显存用的那条指令：
- *       C6 04 25 <disp32> <imm8>
- *   （不能用 mod=00 / r/m=101，那是 RIP 相对寻址。）
+ * mov byte ptr [disp32], imm8。64 位模式下 mod=00、r/m=100 必须配 SIB 字节 0x25
+ * （无基址、无索引），后面跟 32 位绝对地址。ring3 直接改 VGA 显存用的就是这条：
+ *    C6 04 25 <disp32> <imm8>
+ * 不能用 mod=00、r/m=101，那是 RIP 相对寻址。
  */
 static void emit_store_byte(uint32_t addr, uint8_t value)
 {
@@ -82,9 +70,7 @@ static void emit_store_byte(uint32_t addr, uint8_t value)
     emit8(value);
 }
 
-/* ------------------------------------------------------------------ */
 /* 页表：给用户窗口所在的那一个 2MB 页把 U/S 位打开                   */
-/* ------------------------------------------------------------------ */
 
 static void allow_user_huge_page(uint64_t va)
 {
@@ -98,7 +84,7 @@ static void allow_user_huge_page(uint64_t va)
     uint64_t *leaf = &pd[(va >> 21) & 0x1FFu];
 
     /*
-     * 关键：四级都要 U=1。任何一级 U=0，ring3 访问都会 #PF，
+     * 关键：四级都要 U=1。任何一级是 U=0，ring3 访问就 #PF，
      * 只在最后一级置位是最常见的失败方式。
      */
     pml4[0] |= PAGE_USER;
@@ -109,9 +95,7 @@ static void allow_user_huge_page(uint64_t va)
     __asm__ volatile("mov %0, %%cr3" : : "r"(cr3) : "memory");
 }
 
-/* ------------------------------------------------------------------ */
 /* 进 ring3                                                           */
-/* ------------------------------------------------------------------ */
 
 static void __attribute__((noreturn))
 iret_to_ring3(uint64_t rip, uint64_t rsp, uint64_t rflags, uint64_t cs, uint64_t ss)
@@ -132,9 +116,7 @@ iret_to_ring3(uint64_t rip, uint64_t rsp, uint64_t rflags, uint64_t cs, uint64_t
     __builtin_unreachable();
 }
 
-/* ------------------------------------------------------------------ */
 /* 日志辅助                                                           */
-/* ------------------------------------------------------------------ */
 
 static void put_hex64(uint64_t value)
 {
@@ -152,8 +134,8 @@ static void put_hex64(uint64_t value)
 }
 
 /*
- * 惰性分配用户窗口：M1 的自检和 M2 的 syscall 都要这块 2MB，
- * 谁先用到谁负责触发分配；分配只有一次，之后复用同一个窗口。
+ * 惰性分配用户窗口：M1 的自检和 M2 的 syscall 都要这块 2MB，谁先用到谁触发分配。
+ * 只分配一次，之后复用同一个窗口。
  */
 static void usermode_window_ensure(void)
 {
@@ -170,13 +152,11 @@ uint64_t usermode_code_base(void)
     return USER_CODE_BASE;
 }
 
-/* ------------------------------------------------------------------ */
 /* ring3 自检主流程                                                   */
-/* ------------------------------------------------------------------ */
 
 void usermode_self_test(void)
 {
-    /* ---- 0) 先要到用户窗口（M3：512 个连续、2MB 对齐的物理帧） ---- */
+    /* 0) 先要到用户窗口（M3：512 个连续、2MB 对齐的物理帧） */
     usermode_window_ensure();
     if (g_user_window == (uint8_t *)0) {
         err("ring3: no 2 MB-aligned run of 512 free frames");
@@ -185,7 +165,7 @@ void usermode_self_test(void)
     }
     /* 分配器已经把这块内存清零，这就是用户代码区的初始状态。 */
 
-    /* ---- 1) 拼用户代码 ---- */
+    /* 1) 拼用户代码 */
     g_code_len = 0u;
 
     /* (a) 合法：往自己的窗口里写两个字节。页表这一页 U=1，ring3 写得动。
@@ -193,11 +173,10 @@ void usermode_self_test(void)
     emit_store_byte((uint32_t)(USER_CODE_BASE + 0x100u), 0xAAu);
     emit_store_byte((uint32_t)(USER_CODE_BASE + 0x101u), 0x55u);
 
-    /* (b) 原地等一会儿（mov ecx,imm32 / pause / loop $）。
-     *     这段时间里 PIT 以 100Hz 反复打断 ring3：每次 CPU 都要靠 TSS.RSP0
-     *     切到内核栈、跑完 IRQ 再 iretq 回用户态。RSP0 填错的话这里直接三重故障。
-     *     验收办法：下面打印的"中断计数"与 panic 里的总数一比，差值就是
-     *     ring3 期间被正确处理的时钟中断次数。 */
+    /* (b) 原地等一会儿（mov ecx,imm32 / pause / loop $）。这段时间里 PIT 以 100Hz 反复
+     *     打断 ring3：每次 CPU 都要靠 TSS.RSP0 切到内核栈、跑完 IRQ 再 iretq 回用户态。
+     *     RSP0 填错的话这里直接三重故障。验收办法是拿下面打印的中断计数和 panic 里的总数
+     *     比一比，差值就是 ring3 期间被正确处理的时钟中断次数。 */
     emit8(0xB9u);              /* mov ecx, imm32 */
     emit32(0x000FFFFFu);
     emit8(0xF3u);              /* pause */
@@ -206,18 +185,18 @@ void usermode_self_test(void)
     emit8(0xFCu);
 
     /* (c) 非法：往 VGA 文本缓冲写 'X'。0xB8000 落在 U=0 的 2MB 大页里，
-     *     ring3 一写就保护性 #PF —— 用户态连屏幕都碰不到，只能求内核代印。 */
+     *     ring3 一写就保护性 #PF ， 用户态连屏幕都碰不到，只能求内核代印。 */
     emit_store_byte(VGA_MARKER_ADDR, 'X');
 
-    emit8(0xF4u);              /* hlt  —— 到不了这里 */
-    emit8(0xEBu);              /* jmp $ —— 死循环兜底 */
+    emit8(0xF4u);              /* hlt  ， 到不了这里 */
+    emit8(0xEBu);              /* jmp $ ， 死循环兜底 */
     emit8(0xFEu);
 
-    /* ---- 2) 页表与 TSS ---- */
+    /* 2) 页表与 TSS */
     allow_user_huge_page(USER_CODE_BASE);   /* 2MB 大页置 U/S=1 */
     tss_set_rsp0(tss_kernel_stack_top());   /* ring3 进中断时的内核栈 */
 
-    /* ---- 3) 打印交代 ---- */
+    /* 3) 打印交代 */
     info("ring3 self-test (M1):");
     sh_print(SH_PLAIN, "  TSS.RSP0   : ");
     put_hex64(tss_get_rsp0());
@@ -241,7 +220,7 @@ void usermode_self_test(void)
     plain("(kernel halts on purpose. Once M4 adds a scheduler, a user");
     plain(" fault will kill that task instead of stopping the machine.)");
 
-    /* ---- 4) 走 ---- */
+    /* 4) 走 */
     iret_to_ring3(USER_CODE_BASE, USER_STACK_TOP, 0x202u,
                   GDT_USER_CODE_RPL3, GDT_USER_DATA_RPL3);
 }

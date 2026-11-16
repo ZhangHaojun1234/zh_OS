@@ -1,17 +1,11 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    kernel/paging.c
- * Version: 1.0
- * Brief:   重建 4 级页表、2MB 大页恒等映射低 1GB 并加载 CR3。
- * ============================================================================ */
+/* paging.c - 重建 4 级页表，2MB 大页恒等映射低 1GB，装 CR3 */
 
 #include "paging.h"
 
 /*
- * 4 级页表：PML4 -> PDPT -> PD -> PT
- * 本步只做恒等映射（虚拟地址 == 物理地址）：
- *   PML4[0] -> PDPT[0] -> PD，PD 内 512 个 2MB 大页 => 覆盖 0x0 ~ 0x40000000 (1GB)
- * 0xB8000（VGA 文本显存）、内核映像（0x100000 起）、内核栈都在低 1GB 内。
+ * 4 级页表：PML4 -> PDPT -> PD -> PT。这一步只做恒等映射（虚拟地址 == 物理地址）：
+ * PML4[0] -> PDPT[0] -> PD，PD 里 512 个 2MB 大页盖住 0x0 ~ 0x40000000（1GB）。
+ * 0xB8000 的 VGA 显存、0x100000 起的内核映像、内核栈都在低 1GB 里。
  */
 
 static uint64_t pml4[512] __attribute__((aligned(PAGE_SIZE)));
@@ -43,21 +37,19 @@ static inline void enable_pae(void)
     __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
     cr4 |= (1ULL << 5); /* CR4.PAE */
     /*
-     * [ADD] M11：打开 SSE 状态保存。
-     *   CR4.OSFXSR(9)     = 1 —— 内核支持 FXSAVE/FXRSTOR 及其它 SSE 指令；
-     *   CR4.OSXMMEXCPT(10)= 1 —— 未屏蔽的 SIMD 异常走 #XF 而不是 #UD。
-     * 不置这两位的后果：gcc 自动向量化出来的 `movq (%rip),%xmm0` /
-     * `movaps` 在 ring3 里直接变成 #UD（vector 6）—— 这一步就是这么踩进去的。
-     * Linux 在 cr4_init_shadow() 里做的是同一件事。
+     * [ADD] M11：打开 SSE 状态保存。CR4.OSFXSR(9) = 1 表示内核支持 FXSAVE/FXRSTOR 和
+     * 其它 SSE 指令；CR4.OSXMMEXCPT(10) = 1 表示未屏蔽的 SIMD 异常走 #XF 而不是 #UD。
+     * 这两位不置，gcc 自动向量化出来的 movq (%rip),%xmm0 和 movaps 在 ring3 里直接变
+     * #UD（vector 6），这一步就是这么踩进去的。Linux 在 cr4_init_shadow() 里做同一件事。
      */
     cr4 |= (1ULL << 9) | (1ULL << 10);
     __asm__ volatile("mov %0, %%cr4" : : "r"(cr4));
 }
 
 /*
- * [ADD] M11：确认 CR0 的 EM(2) / TS(3) 是 0。
- *   EM=1 会把所有 x87 指令变成 #UD；TS=1 会让首次 SIMD 访问抛 #NM。
- * 有些引导环境会留下这两个位，所以这里清一次，保证用户态能用浮点/SIMD。
+ * [ADD] M11：确认 CR0 的 EM(2) 和 TS(3) 是 0。EM=1 会把所有 x87 指令变成 #UD，
+ * TS=1 会让首次 SIMD 访问抛 #NM。有些引导环境会留下这两个位，这里先清一遍，
+ * 保证用户态能用浮点和 SIMD。
  */
 static inline void enable_fpu(void)
 {
@@ -95,7 +87,6 @@ uint64_t paging_get_cr3(void)
     return read_cr3();
 }
 
-/* ==================================================================== */
 /* [ADD] M25：把一段物理区间映射成内核可写的恒等映射（2MB 大页）        */
 /*                                                                    */
 /* 为什么要单独写这个：帧缓冲通常落在 PCI 空洞里（QEMU std VGA 的 LFB    */
@@ -105,7 +96,6 @@ uint64_t paging_get_cr3(void)
 /* 做法和 Linux 的 ioremap() 一个思路：按 2MB 粒度建 PTE（HUGE），      */
 /* 页表本身从内核 .bss 里的静态池拿（内核镜像在 1MB 处，VA==PA，所以     */
 /* 直接把指针当物理地址填进页表是安全的）。                              */
-/* ==================================================================== */
 
 #define MAP_PD_POOL 8u    /* 最多 8 张页目录 = 8GB 覆盖，够用 */
 #define PHYS_ADDR_MASK 0x000FFFFFFFFFF000ull
@@ -123,12 +113,11 @@ int paging_map_2mb_range(uint64_t phys, uint64_t bytes)
     return paging_map_2mb_range_type(phys, bytes, 0);
 }
 
-/* [ADD] M34：帧缓冲专用映射 —— 把这一段设成 write-combining（PAT 索引 4）。
- *
- * 为什么必须：真机 2880x1800x32 一屏约 20MB，滚屏一次就要拷 20MB。如果这块内存
- * 按默认 UC（不可缓存）走，每次写都是一次慢速总线事务，实测"每个字都要等"、
- * 打一次 help 能卡十几秒。设成 WC 之后 CPU 会把连续写合并成突发，速度差几十倍。
- * 做法：IA32_PAT 的 PA4 由默认 WB 改成 WC(1)，再给 2MB 大页置 PAT 位（bit 12）。
+/* [ADD] M34：帧缓冲专用映射，把这一段设成 write-combining（PAT 索引 4）。
+ * 为什么必须：真机 2880x1800x32 一屏约 20MB，滚一次屏就要拷 20MB。按默认 UC 走，
+ * 每次写都是一次慢速总线事务，实测每个字都要等，打一次 help 能卡十几秒；
+ * 设成 WC 之后 CPU 把连续写合并成突发，差几十倍。
+ * 做法：IA32_PAT 的 PA4 从默认 WB 改成 WC(1)，再给 2MB 大页置 PAT 位（bit 12）。
  */
 #define MSR_IA32_PAT 0x277ull
 #define PAGE_PAT      (1ull << 12)
@@ -144,7 +133,7 @@ static void enable_pat_wc4(void)
         return;
     }
     __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"((uint32_t)MSR_IA32_PAT));
-    /* PA4 的编码在 bit 35:32 —— 也就是 EDX 的低 4 位，不是 EAX！
+    /* PA4 的编码在 bit 35:32 ， 也就是 EDX 的低 4 位，不是 EAX！
      * 默认 PA4 是 0（WB），改成 1 就是 WC。 */
     hi = (hi & ~0x0000000Fu) | 0x1u;
     __asm__ volatile("wrmsr" : : "a"(lo), "d"(hi), "c"((uint32_t)MSR_IA32_PAT));

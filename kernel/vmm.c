@@ -1,9 +1,4 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    kernel/vmm.c
- * Version: 1.0
- * Brief:   M5 每进程地址空间：4 级页表的建立、4KB 页映射、CR3 切换。
- * ============================================================================ */
+/* vmm.c - 每进程地址空间：4 级页表的建立、4KB 页映射、切 CR3 */
 
 #include "vmm.h"
 
@@ -12,22 +7,19 @@
 #include "../shell/shell.h"
 
 /*
- * 恒等映射的意义在这里第一次被打折
- * --------------------------------
- * 到 M4 为止，所有代码都在"虚拟地址 == 物理地址"的假设下写：页帧分配器
- * 返回一个地址，直接当指针用就行。M5 之后这个假设只对**内核**成立：
- *    - 内核（含这里的所有代码、所有内核栈、页帧位图、ramfs）仍在低 1GB 的
- *      2MB 大页恒等映射里，所以内核指针照旧能用；
- *    - 用户的页在 1GB 处，虚拟地址和物理地址已经分开了，谁也不能再混用。
- * 注意：本文件里 `pa` 参数一律是"物理地址"，只有画成指针去写页表时才借用
- * 恒等映射（因为页表本身一定在低 1GB 的物理内存里）。
+ * 恒等映射这个假设从这里开始被打折。到 M4 为止，所有代码都当"虚拟地址 == 物理地址"使：
+ * 页帧分配器返回个地址，直接当指针用。M5 之后它只对内核成立：内核（含本文件、所有内核栈、
+ * 页帧位图、ramfs）还在低 1GB 的 2MB 大页恒等映射里，指针照旧能用；用户的页在 1GB 处，
+ * 虚拟地址和物理地址已经分家，谁再混用谁出事。
+ * 本文件里的 `pa` 一律是物理地址，只有画成指针去写页表时才借用恒等映射，
+ * 因为页表本身一定在低 1GB 的物理内存里。
  */
 
 #define PHYS_MASK   0x000FFFFFFFFFF000ULL
 
 static uint64_t g_kernel_cr3;       /* 抓到之后不再变 */
 
-/* [ADD] M15：COW 的两个计数器 —— 验收时要看到的"证据"。 */
+/* [ADD] M15：COW 的两个计数器 ， 验收时要看到的"证据"。 */
 static uint32_t g_cow_shared;       /* fork 时共享（而不是复制）了几页 */
 static uint32_t g_cow_copied;       /* 有几个 COW 页因为被写而真正复制了一份 */
 static uint32_t g_cow_faults;       /* 一共处理了几次 COW 缺页 */
@@ -120,22 +112,18 @@ int vmm_space_create(vmm_space_t *s, uint64_t va_base)
     zero_page(pd);
     zero_page(pt);
 
-    /* 内核那一半：把内核自己的 PDPT 抄过来（0~1GB 的 2MB 大页恒等映射）。
-     * U/S 保持 0 —— 用户态访问内核地址时，就在这一级被挡住。
-     * 注意：这里是"共享同一张 PDPT/PD"，不复制：内核映射对每个进程都一样，
-     * 复制一份既浪费又会出现改了一处忘了另一处的问题（Linux 也是共享
-     * 内核页表上半部分）。 */
+    /* 内核那一半：把内核自己的 PDPT 抄过来（0~1GB 的 2MB 大页恒等映射），U/S 保持 0，
+     * 用户态访问内核地址就在这一级被挡住。这里是共享同一张 PDPT/PD，不复制：内核映射
+     * 每个进程都一样，复制一份既浪费又容易改一处忘一处，Linux 也是共享内核页表上半部分。 */
     kernel_pml4_pa = paging_get_cr3() & PHYS_MASK;
     kernel_pdpt_pa = as_ptr(kernel_pml4_pa)[0] & PHYS_MASK;
     kernel_pd_pa = as_ptr(kernel_pdpt_pa)[0] & PHYS_MASK;
     pdpt[0] = kernel_pd_pa | PAGE_PRESENT | PAGE_WRITABLE;
 
-    /* ---- M5 踩过的坑（第一版就死在这儿）----
-     * 上面这行写错了整整一轮：第一版把 pdpt[0] 指向了"内核的 PDPT"本身，
-     * 于是新表里 PDPT[0] -> 一个 PDPT，但 CPU 认为 PDPT 项一定指向 PD。
-     * 多抄/少抄一层的后果是恒等映射整段错位 —— 现象是 mov cr3 的下一条指令
-     * 就 #PF，而且 CR2 恰好等于 CR3 的值（取指时走的就是那张坏表）。
-     * 正确的关系是：新 PDPT[0] 必须指向**内核的 PD**（再往下一层）。 */
+    /* M5 踩过的坑，第一版就死在这儿。上面那行起初把 pdpt[0] 指向了内核的 PDPT 本身，
+     * 于是新表里 PDPT[0] 指向一个 PDPT，可 CPU 认为 PDPT 项一定指向 PD。多抄或少抄一层的
+     * 后果是恒等映射整段错位，现象是 mov cr3 的下一条指令就 #PF，而且 CR2 恰好等于 CR3 的值，
+     * 取指走的就是那张坏表。正确的做法是新 PDPT[0] 指向内核的 PD，再往下一层。 */
 
     /* 用户那一半：1GB 处（PDPT 索引 1）指向本进程私有的 PD。 */
     pdpt[1] = pd_pa | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
@@ -202,11 +190,9 @@ uint64_t vmm_probe(const vmm_space_t *s, uint64_t va)
 }
 
 /*
- * [ADD] M16：登记一段"将来会存在"的页（**不分配帧**）。
- *
- * 之后第一次读写这些页时，CPU 报 #PF（P=0），vmm_page_fault() 才真的给一帧并清零。
- * 这就是 Linux 的 demand-zero / anonymous page 的最简版本：装载时只承诺
- * "这段地址是零"，而不是真的把零写进去。
+ * [ADD] M16：登记一段"将来会存在"的页，不分配帧。之后第一次读写这些页，CPU 报 #PF（P=0），
+ * vmm_page_fault() 才真给一帧并清零。这是 Linux demand-zero / anonymous page 的最简版本：
+ * 装载时只承诺"这段地址是零"，而不是真把零写进去。
  */
 int vmm_space_want(vmm_space_t *s, uint64_t va, uint64_t size, uint32_t flags)
 {
@@ -266,24 +252,18 @@ int vmm_map_4k_cow(vmm_space_t *s, uint64_t va, uint64_t pa)
         return -1;
     }
     index = (va - s->va_base) >> 12;
-    /* 注意：这里**不带** PAGE_WRITABLE —— 写就会 #PF，那就是 COW 的入口。 */
+    /* 注意：这里不带 PAGE_WRITABLE ， 写就会 #PF，那就是 COW 的入口。 */
     as_ptr(s->pt_pa)[index] = (pa & PHYS_MASK) | PAGE_PRESENT | PAGE_USER | PAGE_COW;
     s->desire[index] = 0u;      /* [M16] 已经存在的页不再需要"愿望" */
     return 0;
 }
 
 /*
- * [M15] 处理一次 COW 缺页：Linux 的 do_wp_page() 的雏形。
- *
- * 判据（全部满足才算 COW 缺页）：
- *   - 这是 #PF（vector 14）
- *   - 出错码 bit0 = 1（页是存在的；不存在的是"没映射"，不是 COW）
- *   - 出错码 bit1 = 1（是写导致的，读只读页不会 fault）
- *   - 出错码 bit2 = 1（来自用户态，U/S）
- *   - CR2 落在本进程私有窗口内、且那一项带着 PAGE_COW
- *
- * 处理：申请一帧新的 → 拷整页 → 把 PT 项改成可写、去掉 COW → 老的引用计数减一。
- * 返回 1 表示"已修复，iretq 回去重新执行那条写指令"，0 表示不是 COW、交给上层。
+ * [M15] 处理一次 COW 缺页，Linux do_wp_page() 的雏形。判据全满足才算 COW 缺页：
+ * 是 #PF（vector 14）、err bit0=1（页存在，不存在的那叫没映射）、bit1=1（写导致的，
+ * 读只读页不会 fault）、bit2=1（来自用户态）、CR2 落在本进程私有窗口内且那一项带 PAGE_COW。
+ * 处理是申请一帧新的、拷整页、PT 项改成可写并去掉 COW、老引用计数减一。
+ * 返回 1 表示修好了，iretq 回去重执行那条写指令；0 表示不是 COW，交给上层。
  */
 int vmm_cow_fault(uint64_t va, uint64_t err)
 {
@@ -298,17 +278,13 @@ int vmm_cow_fault(uint64_t va, uint64_t err)
     uint32_t k;
 
     /*
-     * [M15 踩过的坑] 这里一开始只看 U/S 位（要求出错码 bit2=1，即"来自用户态"），
-     * 结果 e#PF 从 ring0 进来时被当成"不可修"直接 panic。
-     *
-     * 为什么会从 ring0 写 COW 页？因为本版内核没有 copy_to_user()：
-     * sys_getcwd / sys_readdir 这些调用是**内核直接往用户缓冲区里写**的。
-     * fork 之后父进程那些页已经是"只读 + COW"，于是内核代写就撞上了同一道墙。
-     *
-     * 修法是不要看特权级：只要是"present + write + 本进程窗口里的 COW 页"，
-     * 就是一次合法的写时复制 —— 谁写的都一样，都得先拥有一份自己的副本。
-     * 这也顺便保住了语义：如果放行内核直接写共享帧（比如把 CR0.WP 置 0），
-     * 父进程的这次写就会污染子进程的那一份，COW 就假了。
+     * [M15 踩的坑] 这里一开始只看 U/S 位，要求 err bit2=1 即来自用户态，结果 #PF 从 ring0
+     * 进来时被当成不可修，直接 panic。怎么会从 ring0 写 COW 页？因为本版内核没有
+     * copy_to_user()，sys_getcwd / sys_readdir 这些是内核直接往用户缓冲区里写的。
+     * fork 之后父进程那些页已经只读加 COW，内核代写就撞上同一道墙。
+     * 修法是不看特权级：只要 present + 写 + 本进程窗口里的 COW 页，就是一次合法写时复制，
+     * 谁写的都一样，都得先有自己的副本。要是放行内核直接写共享帧（比如把 CR0.WP 置 0），
+     * 父进程这次写就污染了子进程那份，COW 就成了假的。
      */
     if ((err & 0x1u) == 0u || (err & 0x2u) == 0u) {   /* 必须"存在"且"写" */
         return 0;
@@ -347,13 +323,10 @@ int vmm_cow_fault(uint64_t va, uint64_t err)
 }
 
 /*
- * [ADD] M16：按需分配分支 —— "这一页你从没碰过，但装载时答应过它存在"。
- *
- * 判据：页**不存在**（err bit0 = 0）、落在私有窗口内、而且 desire[index] 非零
- *       （装载器用 vmm_space_want() 登记过）。分配一帧（分配器返回的帧已清零，
- *       正好就是 .bss / 匿名页要的"全零"），按愿望位决定可写与否。
- *
- * 返回 1 = 修好了，返回 0 = 不是按需页（可能是野指针 / 栈溢出 / 越权）。
+ * [ADD] M16：按需分配分支，这一页你从没碰过，但装载时答应过它存在。判据是页不存在
+ * （err bit0=0）、落在私有窗口内、desire[index] 非零（装载器用 vmm_space_want() 登记过）。
+ * 分配一帧，分配器返回的帧已经清零，正好是 .bss 和匿名页要的全零，再按愿望位决定可写与否。
+ * 返回 1 修好了，0 表示不是按需页，可能是野指针、栈溢出或越权。
  */
 static int vmm_demand_fault_here(vmm_space_t *s, uint64_t va, uint64_t err)
 {
@@ -387,12 +360,10 @@ static int vmm_demand_fault_here(vmm_space_t *s, uint64_t va, uint64_t err)
 }
 
 /*
- * [ADD] M16：统一的缺页入口（Linux 的 handle_pte_fault 那个位置）。
- *
- * 顺序就是 Linux 的判断顺序：
- *   1) 页存在 + 写 + COW        -> do_wp_page()       （M15）
- *   2) 页不存在 + 登记过按需     -> do_anonymous_page() （M16：零页按需出现）
- *   3) 其他                      -> 交给上层（ring3 杀进程 / ring0 panic）
+ * [ADD] M16：统一缺页入口，位置相当于 Linux 的 handle_pte_fault，顺序也照它来：
+ * 1) 页存在 + 写 + COW，走 do_wp_page()（M15）；
+ * 2) 页不存在 + 登记过按需，走 do_anonymous_page()，零页按需出现（M16）；
+ * 3) 其他交给上层，ring3 杀进程，ring0 panic。
  */
 int vmm_page_fault(uint64_t va, uint64_t err)
 {
@@ -428,15 +399,12 @@ int vmm_space_clone(vmm_space_t *dst, const vmm_space_t *src, uint32_t *pages_ou
     }
 
     /*
-     * [M15] 这里就是 COW 的核心：**一帧都不复制**。
-     *
-     * 旧版（M5/M7）对每个已映射页 phys_alloc_frame() + 整页拷贝，代价与进程的
-     * 常驻内存成正比。现在改成：
-     *   1) 子进程的 PT 项指向**父进程的同一帧**，只读 + COW 标记；
-     *   2) 父进程那一项也改成只读 + COW（否则父进程一写，子进程就看见脏数据）；
-     *   3) 这一帧的引用计数 +1（两个页表项指着它了）。
-     * 谁先写谁触发 #PF，那一刻才复制自己那一份 —— 这就是 copy-on-write。
-     * 父子都不写的情况下，fork 的用户页代价是 0 帧，只有 4 张页表帧。
+     * [M15] COW 的核心就在这儿：一帧都不复制。旧版 M5/M7 对每个已映射页都是
+     * phys_alloc_frame() 加整页拷贝，代价跟进程常驻内存成正比。现在改成三步：
+     * 子进程 PT 项指向父进程同一帧，只读加 COW；父进程那一项也改成只读加 COW，
+     * 否则父进程一写子进程就看见脏数据；这一帧引用计数加一。
+     * 谁先写谁触发 #PF，那一刻才复制自己那份。父子都不写的情况下，fork 的用户页
+     * 代价是 0 帧，只花 4 张页表帧。
      */
     for (i = 0u; i < VMM_ENTRIES; ++i) {
         uint64_t *src_pt = as_ptr(src->pt_pa);
@@ -474,14 +442,11 @@ int vmm_space_clone(vmm_space_t *dst, const vmm_space_t *src, uint32_t *pages_ou
 }
 
 /*
- * [M12] 销毁一个地址空间（Linux 的 mmput() / free_pgtables() 的雏形）。
- *
- * 私有窗口只有 2MB，正好被**一个** PT 覆盖（512 项 × 4KB），所以只要扫一遍
- * 这一页 PT 就够了：每个 PRESENT 项背后那一帧就是用户真正拿到的内存
- * （代码页、栈页、fork 复制出来的页），全部归还。
- *
- * 四张页表自己那四帧也要还 —— 这是本版最容易漏的地方：只还用户页、不还页表，
- * 连续 exec 会让"页表帧"永远涨（每个进程 4 帧，看着不多，跑几十条命令就明显）。
+ * [M12] 销毁一个地址空间，Linux mmput() / free_pgtables() 的雏形。私有窗口只有 2MB，
+ * 正好被一个 PT 覆盖（512 项乘 4KB），扫一遍这页 PT 就够：每个 PRESENT 项背后那帧就是
+ * 用户真正拿到的内存（代码页、栈页、fork 出来的页），全还回去。
+ * 四张页表自己那四帧也得还，这是最容易漏的地方：只还用户页不还页表，连续 exec 会让
+ * 页表帧一直涨，每个进程 4 帧看着不多，跑几十条命令就看出来了。
  */
 int vmm_space_destroy(vmm_space_t *s, uint32_t *pages_out)
 {

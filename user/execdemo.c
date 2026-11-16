@@ -1,17 +1,7 @@
-/* ============================================================================
- * zh_OS 0.2beta (x86_64)
- * File:    user/execdemo.c
- * Version: 0.2beta
- * Brief:   M8 的演示程序：一个进程把自己"换掉"——exec("/bin/hello.elf")。
- *
- * 这个程序只做两件事：
- *   1) 打印自己的 pid；
- *   2) 调 exec("/bin/hello.elf")，从此这个进程里跑的就是 hello 了。
- *
- * exec 成功的话这一行永远执行不到（新程序从 e_entry 开始跑、旧代码被替换），
- * 所以屏幕上"hello from a real ELF64 binary"出现、并且 pid 没变，
- * 就同时证明了：按路径从 ramfs 打开 ELF、装载进去、原地换映像、pid 不变。
- * ============================================================================ */
+/* execdemo.c - M8 的演示程序：一个进程把自己"换掉"，exec("/bin/hello.elf")。
+ * 只做两件事：打印自己的 pid，然后 exec。成功的话那行后面的代码永远执行不到，
+ * 所以屏幕上 "hello from a real ELF64 binary" 出现、pid 又没变，就同时证明了按路径从 ramfs
+ * 打开 ELF、装载进去、原地换映像、pid 不变。 */
 
 typedef unsigned long u64;
 

@@ -1,18 +1,8 @@
-/* ============================================================================
- * zh_OS 0.2beta (x86_64)
- * File:    user/forkdemo.c
- * Version: 0.2beta
- * Brief:   M7 的演示程序：一个真 ELF 进程用 fork 生出两个子进程，用 wait 收尸。
- *
- * 它验证的四件事：
- *   1) fork() 之后有**两个**执行流，各自从 int 0x80 的下一条指令继续跑，
- *      父进程拿到子进程 pid，子进程拿到 0 —— 这是 Linux fork 的返回值语义；
- *   2) 子进程有自己的地址空间副本：子进程改 g_counter，父进程读到 0（不是共享内存）；
- *   3) wait() 会**阻塞**：父进程睡下、子进程被调度上去、退出后父进程被唤醒；
- *   4) 退出码能穿过 wait() 回到父进程（11 和 22）。
- *
- * 这个程序里没有任何 libc，全靠 int 0x80 和一个自己写的十进制打印。
- * ============================================================================ */
+/* forkdemo.c - M7 演示：真 ELF 进程 fork 生两个子进程，用 wait 收尸。验证四件事：
+ * fork 之后两个执行流都从 int 0x80 的下一条继续跑，父拿到子 pid、子拿到 0；
+ * 子进程有自己的地址空间副本，子改 g_counter，父读到 0，不是共享内存；
+ * wait() 真的会阻塞：父睡下、子被调度上去、退出后父被唤醒；
+ * 退出码能穿过 wait 回到父进程（11 和 22）。整份代码没有 libc，全靠 int 0x80 和自己写的十进制打印。 */
 
 typedef unsigned long u64;
 
@@ -33,7 +23,7 @@ static u64 sys_call(u64 nr, u64 a1, u64 a2, u64 a3)
     return ret;
 }
 
-/* ---- 极简打印：把 u64 转十进制再 sys_write（没有 sprintf） ---- */
+/* 极简打印：把 u64 转十进制再 sys_write（没有 sprintf） */
 static char g_buf[96];
 
 static u64 put_str(char *dst, const char *src)
@@ -108,11 +98,11 @@ void _start(void)
     print_num(me);
     print_str("\n");
 
-    /* ---------- 第一个子进程 ---------- */
+    /* 第一个子进程 */
     child = sys_call(ZH_SYS_FORK, 0u, 0u, 0u);
 
     if (child == 0u) {
-        /* ---- 子进程 1 ---- */
+        /* 子进程 1 */
         u64 mypid = sys_call(ZH_SYS_GETPID, 0u, 0u, 0u);
         print_str("  [child 1] pid=");
         print_num(mypid);
@@ -125,7 +115,7 @@ void _start(void)
         sys_call(ZH_SYS_EXIT, 11u, 0u, 0u);
     }
 
-    /* ---- 父进程 ---- */
+    /* 父进程 */
     print_str("  [parent] fork returned child pid ");
     print_num(child);
     print_str("\n");
@@ -134,7 +124,7 @@ void _start(void)
     line("  [parent] my g_counter is still ", g_counter,
          " -> the child's write did NOT leak\n");
 
-    /* ---------- 第二个子进程：走一遍"僵尸先死、父进程后 wait"的分支 ---------- */
+    /* 第二个子进程：走一遍"僵尸先死、父进程后 wait"的分支 */
     child = sys_call(ZH_SYS_FORK, 0u, 0u, 0u);
 
     if (child == 0u) {

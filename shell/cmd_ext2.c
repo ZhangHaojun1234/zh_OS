@@ -1,12 +1,5 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    shell/cmd_ext2.c
- * Version: 1.0
- * Brief:   ext2 只读的 4 个 Shell 命令：ext2mount / ext2info / ext2ls / ext2cat。
- *
- * M19，纯增量「只添加，不修改」：本文件是新文件，命令表在 commands.c 末尾追加。
- * ext2 命令与 ramfs 的 ls / cat、FAT16 的 fatls / fatcat 完全隔离。
- * ============================================================================ */
+/* cmd_ext2.c - ext2 只读的四个命令：ext2mount / ext2info / ext2ls / ext2cat。
+ * 跟 ramfs 的 ls / cat、FAT16 的 fatls / fatcat 完全隔离，命令表在 commands.c 末尾追加。 */
 
 #include "shell.h"    /* SHELL_CONTINUE / sh_println / err / ok / warn / plain */
 #include "vga.h"      /* vga_putchar / VGA_LIGHT_GREY / VGA_BLACK */
@@ -92,9 +85,7 @@ static void print_hex(const char *label, uint32_t v)
     sh_println(SH_PLAIN, buf);
 }
 
-/* ------------------------------------------------------------------ */
 /* ext2mount                                                          */
-/* ------------------------------------------------------------------ */
 
 int cmd_ext2mount(int argc, char **argv)
 {
@@ -112,9 +103,7 @@ int cmd_ext2mount(int argc, char **argv)
     return SHELL_CONTINUE;
 }
 
-/* ------------------------------------------------------------------ */
 /* ext2info：把超级块里读到的几何信息摊开，便于和 dumpe2fs 对照      */
-/* ------------------------------------------------------------------ */
 
 int cmd_ext2info(int argc, char **argv)
 {
@@ -153,9 +142,7 @@ int cmd_ext2info(int argc, char **argv)
     return SHELL_CONTINUE;
 }
 
-/* ------------------------------------------------------------------ */
 /* ext2ls [path]                                                      */
-/* ------------------------------------------------------------------ */
 
 int cmd_ext2ls(int argc, char **argv)
 {
@@ -168,9 +155,7 @@ int cmd_ext2ls(int argc, char **argv)
     return SHELL_CONTINUE;
 }
 
-/* ------------------------------------------------------------------ */
 /* ext2cat <path>                                                     */
-/* ------------------------------------------------------------------ */
 
 int cmd_ext2cat(int argc, char **argv)
 {
@@ -213,11 +198,9 @@ int cmd_ext2cat(int argc, char **argv)
     return SHELL_CONTINUE;
 }
 
-/* ------------------------------------------------------------------ */
 /* [ADD] M21：ext2create <path> <text...>                              */
 /*   把后面的参数用空格拼成内容，真正写进磁盘：分配 inode -> 分配块 -> */
 /*   写数据 -> 写 inode -> 父目录插目录项。                            */
-/* ------------------------------------------------------------------ */
 
 #define CREATE_MAX_TEXT 4000u
 static uint8_t g_ctext[CREATE_MAX_TEXT];
@@ -262,9 +245,7 @@ int cmd_ext2create(int argc, char **argv)
     return SHELL_CONTINUE;
 }
 
-/* ------------------------------------------------------------------ */
-/* [ADD] M21：ext2free —— 超级块里的空闲块 / 空闲 inode 计数            */
-/* ------------------------------------------------------------------ */
+/* [ADD] M21：ext2free ， 超级块里的空闲块 / 空闲 inode 计数            */
 
 int cmd_ext2free(int argc, char **argv)
 {
@@ -282,13 +263,11 @@ int cmd_ext2free(int argc, char **argv)
     return SHELL_CONTINUE;
 }
 
-/* ------------------------------------------------------------------ */
 /* [ADD] M22：ext2fill <path> <KB>                                     */
 /*   造一个 >12KB 的文件，逼着写路径必须用一级间接块：                  */
 /*   每行 "line NNN of the indirect-block write test"，最后一行是       */
-/*   END-OF-INDIRECT-WRITE —— 它落在第 13 块之后，只有间接块走对了才  */
+/*   END-OF-INDIRECT-WRITE ， 它落在第 13 块之后，只有间接块走对了才  */
 /*   能读回来。                                                       */
-/* ------------------------------------------------------------------ */
 
 #define FILL_MAX 28672u                 /* 12 直接块 + 256 间接块 = 268KB，这里限 28KB */
 
@@ -384,9 +363,7 @@ int cmd_ext2fill(int argc, char **argv)
     return SHELL_CONTINUE;
 }
 
-/* ------------------------------------------------------------------ */
-/* [ADD] M23：ext2rm —— 真正删一个文件（释放块 + 清 inode + 摘目录项）*/
-/* ------------------------------------------------------------------ */
+/* [ADD] M23：ext2rm ， 真正删一个文件（释放块 + 清 inode + 摘目录项）*/
 
 int cmd_ext2rm(int argc, char **argv)
 {
@@ -416,9 +393,7 @@ int cmd_ext2rm(int argc, char **argv)
     return SHELL_CONTINUE;
 }
 
-/* ------------------------------------------------------------------ */
-/* [ADD] M28：ext2big —— 写一个超过 268KB 的文件（用上二/三级间接块） */
-/* ------------------------------------------------------------------ */
+/* [ADD] M28：ext2big ， 写一个超过 268KB 的文件（用上二/三级间接块） */
 
 /* 生成内容：每 64 字节一行，行首带序号，末尾那段是校验标记。
  * 读回来的时候只要看到大小和尾标记，就说明指针树走对了。 */
@@ -517,9 +492,7 @@ int cmd_ext2big(int argc, char **argv)
     return SHELL_CONTINUE;
 }
 
-/* ------------------------------------------------------------------ */
-/* [ADD] M28：ext2tail —— 读大文件的最后 N 字节，验证二级间接读路径   */
-/* ------------------------------------------------------------------ */
+/* [ADD] M28：ext2tail ， 读大文件的最后 N 字节，验证二级间接读路径   */
 
 int cmd_ext2tail(int argc, char **argv)
 {

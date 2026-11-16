@@ -1,27 +1,15 @@
-/* ============================================================================
- * zh_OS 0.2beta (x86_64)
- * File:    fs/ramfs.h
- * Version: 0.2beta
- * Brief:   ramfs 内存态文件系统接口（节点结构、路径解析、权限判断与命令原型）。
- *
- * 设计要点（B 组第 1 个功能，纯增量「只添加，不修改」）：
- *   - 全部内存态：节点与文件内容都用 kmalloc 分配，重启即复位，不落盘。
- *   - 路径支持绝对 /a/b、相对 a/b，以及 ./、..、~（展开为当前用户 home，
- *     若 home 不存在回退 /）。
- *   - 权限：root（或 init 阶段 user_current()==NULL）可在任意位置创建/删除；
- *     普通用户只能在自己 home 及其子树内操作。命令层负责把错误码打印成红字。
- *   - 本头文件同时声明基于 ramfs 的 7 个 Shell 命令（ls/cd/pwd/cat/mkdir/
- *     touch/rm），供 commands.c 的命令表注册使用。
- * ============================================================================ */
+/* ramfs.h - 内存文件系统的接口，顺带声明七个命令（ls/cd/pwd/cat/mkdir/touch/rm）。
+ * 全在内存里，kmalloc 分配，重启就复位。路径认绝对 /a/b、相对 a/b，以及 ./、..、~
+ * （展开成当前用户 home，没有 home 就回退 /）。
+ * 权限：root 或还没登录（user_current() 为 NULL）时哪儿都能建能删，普通用户只在自己 home 子树里。
+ * 错误码由命令层负责打印成红字。 */
 
 #ifndef ZH_OS_FS_RAMFS_H
 #define ZH_OS_FS_RAMFS_H
 
 #include <stdint.h>
 
-/* ------------------------------------------------------------------ */
 /* 节点与错误码                                                       */
-/* ------------------------------------------------------------------ */
 
 typedef enum {
     RAMFS_FILE,
@@ -49,9 +37,7 @@ typedef struct ramfs_node {
 #define RAMFS_ERR_INVAL   -7   /* 参数非法（如路径为空、组件过多） */
 #define RAMFS_ERR_NOMEM   -8   /* kmalloc 失败 */
 
-/* ------------------------------------------------------------------ */
 /* 初始化与路径解析                                                   */
-/* ------------------------------------------------------------------ */
 
 /* 创建根 "/" 与 /root、/home、/home/zh 三个目录，并把 cwd 设为根。
  * 必须在 heap_init() 之后、任何 Shell 启动之前调用一次。 */
@@ -60,9 +46,7 @@ void ramfs_init(void);
 /* 把显示用的 cwd 字符串注册给 Shell 提示符：提示符会改用真实路径而非 "~"。 */
 void shell_set_cwd_fn(const char *(*fn)(void));
 
-/* ------------------------------------------------------------------ */
 /* 对外接口（全部 kmalloc 分配，不链接 libc）                         */
-/* ------------------------------------------------------------------ */
 
 /* 创建目录：0 成功，负数错误码。parent 不在 home 子树内（普通用户）返回 PERM。 */
 int ramfs_mkdir(const char *path);
@@ -90,7 +74,7 @@ uint64_t ramfs_node_size(const ramfs_node_t *node);
 int ramfs_node_read_at(ramfs_node_t *node, uint64_t off, uint8_t *buf,
                        uint64_t maxlen, uint64_t *outlen);
 
-/* [ADD] M10：可写文件 —— creat（截断/新建）与追加写。 */
+/* [ADD] M10：可写文件 ， creat（截断/新建）与追加写。 */
 int ramfs_create_file(const char *path, ramfs_node_t **out);
 int ramfs_node_append(ramfs_node_t *node, const uint8_t *buf, uint64_t len);
 
@@ -107,9 +91,7 @@ const char *ramfs_get_cwd(void);
 /* 把错误码映射为可读英文串（供命令层拼红字）。 */
 const char *ramfs_strerror(int rc);
 
-/* ------------------------------------------------------------------ */
 /* 基于 ramfs 的 Shell 命令（命令表末尾追加注册）                     */
-/* ------------------------------------------------------------------ */
 
 int cmd_ls(int argc, char **argv);
 int cmd_cd(int argc, char **argv);

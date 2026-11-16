@@ -1,20 +1,8 @@
-/* ============================================================================
- * zh_OS 0.2beta (x86_64)
- * File:    user/argvdemo.c
- * Version: 0.2beta
- * Brief:   M11 演示：程序的 _start 第一次能拿到 argc / argv。
- *
- * 内核在 exec 成功后把 rdi=argc、rsi=&argv[0] 交给 _start
- * （参数字符串铺在新地址空间的栈页底部）。所以 _start 按 C ABI 声明参数即可：
- *
- *     void _start(unsigned long argc, char **argv)
- *
- * 这个程序会扮演两个角色：
- *   - argc == 0：我是内核装载器起的。fork 一个子进程，让子进程 exec **自己**，
- *                但这次带三个参数 {"argvdemo", "alpha", "beta"}；然后等它。
- *   - argc > 0 ：我是被 exec 起来的。把 argc 与每个 argv 打印出来，exit(0)。
- * 于是同一屏里既有"exec 带参数"的证据，又有"fork + exec + wait"的完整流程。
- * ============================================================================ */
+/* argvdemo.c - M11 的演示程序，_start 第一次能拿到 argc / argv。内核 exec 成功后把 rdi=argc、
+ * rsi=&argv[0] 交给 _start，参数字符串铺在新地址空间栈页底部，所以这里直接按 C ABI 写成
+ * void _start(unsigned long argc, char argv)。argc == 0 说明我是内核起的：fork 一个子进程，
+ * 让它带 {"argvdemo", "alpha", "beta"} 三个参数 exec 自己，然后等它；argc > 0 说明我是被 exec
+ * 起来的：把 argc 和每个 argv 打出来，exit(0)。 */
 
 typedef unsigned long u64;
 
@@ -83,7 +71,7 @@ void _start(unsigned long argc, char **argv)
     u64 i;
 
     if (argc > 0u) {
-        /* ---- 我是被 exec 起来的 ---- */
+        /* 我是被 exec 起来的 */
         me = sys_call(ZH_SYS_GETPID, 0u, 0u, 0u);
         print_str("[child ] I was exec()d with argc=");
         print_u64(argc);
@@ -101,7 +89,7 @@ void _start(unsigned long argc, char **argv)
         sys_call(ZH_SYS_EXIT, 0u, 0u, 0u);
     }
 
-    /* ---- 我是装载器起的：fork + exec（带参数）+ wait ---- */
+    /* 我是装载器起的：fork + exec（带参数）+ wait */
     me = sys_call(ZH_SYS_GETPID, 0u, 0u, 0u);
     print_str("argv demo: pid ");
     print_u64(me);

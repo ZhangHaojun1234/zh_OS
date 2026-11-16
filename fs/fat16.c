@@ -1,17 +1,7 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    fs/fat16.c
- * Version: 1.0
- * Brief:   FAT16 只读实现：解析 BPB、定位 FAT/根目录/数据区、遍历 8.3 目录项、
- *          跟随簇链读文件。读的是 ATA 主通道「从设备」（QEMU if=ide,index=1）。
- *
- * B 组第 3 个功能，纯增量「只添加，不修改」：
- *   - 只读：不实现写、不实现 mkdir / rm。
- *   - 只解析 8.3 短文件名，不解析 LFN；名字匹配大小写不敏感。
- *   - 支持根目录与一层子目录（实现上最多 4 段路径，比任务要求更宽松）。
- *   - 复用 drivers/ata 的 ata_read_sector_slave（B2 的 ata_read_sector 一行未改）。
- *   - 本文件不触碰 ramfs，fatls / fatcat 与 ls / cat 完全隔离。
- * ============================================================================ */
+/* fat16.c - FAT16 只读：解析 BPB、定位 FAT/根目录/数据区、走 8.3 目录项、跟簇链读文件。
+ * 读主通道从设备（QEMU if=ide,index=1）。只读，不写不建不删；只认 8.3 短名，不解析 LFN，
+ * 名字匹配不分大小写；根目录加一层子目录，实现上放宽到 4 段路径。
+ * 复用 ata_read_sector_slave，跟 ramfs 的 ls / cat 互不干扰。 */
 
 #include "fat16.h"
 
@@ -20,9 +10,7 @@
 #include "../drivers/ata.h"   /* ata_read_sector_slave / ATA_OK */
 #include "../drivers/vga.h"   /* vga_print / vga_putchar / enum vga_color */
 
-/* ------------------------------------------------------------------ */
 /* 常量                                                               */
-/* ------------------------------------------------------------------ */
 
 #define FAT16_SECTOR_SIZE          512u   /* 本实现要求每扇区 512 字节 */
 #define FAT16_ENTRIES_PER_SECTOR   16u    /* 512 / 32 = 16 个目录项 */
@@ -30,9 +18,7 @@
 #define FAT16_EOC_MIN              0xFFF8u /* >= 该值为簇链结束 */
 #define FAT16_MAX_CLUSTER          0xFFEFu /* FAT16 有效簇号上限 */
 
-/* ------------------------------------------------------------------ */
 /* 挂载后缓存的几何信息（全部为绝对 LBA，已含隐藏扇区）              */
-/* ------------------------------------------------------------------ */
 
 static int      g_mounted = 0;
 static uint32_t g_bytes_per_sector   = 0;
@@ -53,9 +39,7 @@ static uint32_t g_cluster_count      = 0;
 /* 单扇区暂存缓冲（静态，避免占内核栈） */
 static uint8_t g_sector_buf[FAT16_SECTOR_SIZE];
 
-/* ------------------------------------------------------------------ */
 /* 小端读取与目录项判定                                               */
-/* ------------------------------------------------------------------ */
 
 static uint16_t rd16(const uint8_t *p)
 {
@@ -207,9 +191,7 @@ static uint32_t str_len(const char *s)
     return n;
 }
 
-/* ------------------------------------------------------------------ */
 /* 簇与 FAT 定位                                                      */
-/* ------------------------------------------------------------------ */
 
 static uint32_t cluster_to_lba(uint32_t cluster)
 {
@@ -230,9 +212,7 @@ static int fat16_next_cluster(uint32_t cluster, uint32_t *next)
     return FAT16_OK;
 }
 
-/* ------------------------------------------------------------------ */
 /* 目录扫描：根目录（固定区域）与子目录（簇链）                       */
-/* ------------------------------------------------------------------ */
 
 /* 返回 1=找到并写入 out；0=遍历结束未找到；负=错误 */
 static int scan_root(const char *want, uint8_t *out)
@@ -315,9 +295,7 @@ static int scan_cluster_dir(uint32_t first, const char *want, uint8_t *out)
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 /* 路径解析                                                           */
-/* ------------------------------------------------------------------ */
 
 /* 把 path 按 '/' 切段（跳过前导/重复 '/'），最多 4 段、每段最长 15 字符。
  * 返回 0 成功（*n 为段数，*n==0 表示根目录），-1 非法。 */
@@ -398,9 +376,7 @@ static int resolve_entry(const char *path, uint8_t *out)
     return FAT16_ERR_NOENT;
 }
 
-/* ------------------------------------------------------------------ */
 /* 目录列举：4 列、目录亮蓝带 '/'、文件浅灰                           */
-/* ------------------------------------------------------------------ */
 
 static void list_emit(const uint8_t *e, uint32_t *count)
 {
@@ -506,9 +482,7 @@ static int list_cluster_dir(uint32_t first, uint32_t *count)
     return FAT16_OK;
 }
 
-/* ------------------------------------------------------------------ */
 /* 对外接口                                                           */
-/* ------------------------------------------------------------------ */
 
 int fat16_mount(void)
 {
@@ -521,7 +495,7 @@ int fat16_mount(void)
 
     const uint8_t *b = g_sector_buf;
 
-    /* ---- 解析 BPB（偏移见 fat16.h 顶部字段表） ---- */
+    /* 解析 BPB（偏移见 fat16.h 顶部字段表） */
     const uint32_t bps       = rd16(b + 0x0B);   /* 每扇区字节数 */
     const uint32_t spc       = (uint32_t)b[0x0D];/* 每簇扇区数 */
     const uint32_t rsvd      = rd16(b + 0x0E);   /* 保留扇区数 */
@@ -533,7 +507,7 @@ int fat16_mount(void)
     const uint32_t tot32     = rd32(b + 0x20);   /* 总扇区数（32 位） */
     const uint32_t rootclus  = rd32(b + 0x2C);   /* 根簇号（仅 FAT32 有意义） */
 
-    /* ---- BPB 合法性 ---- */
+    /* BPB 合法性 */
     if (bps != FAT16_SECTOR_SIZE) {
         return FAT16_ERR_BPB;    /* 本实现只支持 512 字节扇区 */
     }
@@ -549,7 +523,7 @@ int fat16_mount(void)
         return FAT16_ERR_BPB;
     }
 
-    /* ---- 推导各区域起始 LBA（绝对，含隐藏扇区） ---- */
+    /* 推导各区域起始 LBA（绝对，含隐藏扇区） */
     const uint32_t part_start   = hidd;
     const uint32_t fat_start    = part_start + rsvd;
     const uint32_t root_start   = fat_start + nfats * fatsz;
@@ -563,7 +537,7 @@ int fat16_mount(void)
         clusters = (total - meta) / spc;
     }
 
-    /* ---- 类型校验：0x36 处 "FAT16   " 或簇数落在 FAT16 区间 ---- */
+    /* 类型校验：0x36 处 "FAT16   " 或簇数落在 FAT16 区间 */
     const bool want_str = (b[0x36] == 'F' && b[0x37] == 'A' && b[0x38] == 'T' &&
                            b[0x39] == '1' && b[0x3A] == '6' &&
                            b[0x3B] == ' ' && b[0x3C] == ' ' && b[0x3D] == ' ');
@@ -572,7 +546,7 @@ int fat16_mount(void)
         return FAT16_ERR_NOTFAT;
     }
 
-    /* ---- 缓存几何信息 ---- */
+    /* 缓存几何信息 */
     g_bytes_per_sector    = bps;
     g_sectors_per_cluster = spc;
     g_reserved_sectors    = rsvd;

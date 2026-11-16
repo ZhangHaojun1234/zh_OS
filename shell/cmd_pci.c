@@ -1,9 +1,4 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    shell/cmd_pci.c
- * Version: 1.0
- * Brief:   [ADD] M30/M31：pci（枚举配置空间）与 ahci（控制器与端口状态）。
- * ============================================================================ */
+/* cmd_pci.c - M30/M31 的 pci 和 ahci 两个命令：前者枚举配置空间，后者看控制器和端口状态 */
 
 #include <stdint.h>
 
@@ -161,7 +156,7 @@ int cmd_nvme(int argc, char **argv)
     sh_print_u32(SH_OK, nvme_sector_count());
     sh_newline();
 
-    /* 读 LBA2 —— ext2 超级块所在扇区；magic（偏移 56）应为 0xEF53 */
+    /* 读 LBA2 ， ext2 超级块所在扇区；magic（偏移 56）应为 0xEF53 */
     if (nvme_read_sector(2u, sec) != 0) {
         err("nvme: sector 2 read failed");
         return 0;
@@ -233,7 +228,7 @@ int cmd_ahci(int argc, char **argv)
     put_hex(ahci_port_signature(), 8u, SH_OK);
     sh_newline();
 
-    /* 读 LBA2 —— ext2 超级块所在扇区；magic（偏移 56）应为 0xEF53 */
+    /* 读 LBA2 ， ext2 超级块所在扇区；magic（偏移 56）应为 0xEF53 */
     if (ahci_read_sector(2u, sec) != 0) {
         err("ahci: sector 2 read failed");
         return 0;

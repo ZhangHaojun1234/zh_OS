@@ -1,13 +1,6 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    shell/cmd_m10.c
- * Version: 1.0
- * Brief:   M10 的两条命令。都从 ramfs 按路径装载程序（M8/M9 的成果），
- *          再由**用户程序自己**去做文件写入或 fork/exec/wait。
- *
- *   wr     -> /bin/wrdemo.elf    creat + write + close + 读回
- *   spawn  -> /bin/spawndemo.elf fork -> 子进程 exec /bin/hello.elf -> 父进程 wait
- * ============================================================================ */
+/* cmd_m10.c - M10 的两条命令，都从 ramfs 按路径装程序，剩下的交给用户程序自己做：
+ * wr    -> /bin/wrdemo.elf    creat + write + close + 读回
+ * spawn -> /bin/spawndemo.elf fork -> 子进程 exec /bin/hello.elf -> 父进程 wait */
 
 #include "cmd_m10.h"
 

@@ -1,16 +1,8 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    drivers/mtrr.c
- * Version: 1.0
- * Brief:   MTRR 支持 —— 把帧缓冲那段物理内存设成 write-combining（WC）。
- *
- * 为什么需要它（M34 真机教训）：
- *   光把页表 PAT 位设成 WC 是不够的。x86 的内存类型是"MTRR 与 PAT 取最严格"：
- *   固件通常给 MMIO 空洞留一条 UC 的 variable MTRR，只要这条 MTRR 压在上面，
- *   页表里写 PAT=WC 也照样按 UC 跑，表现就是"每写一个像素等一次总线"。
- *   所以必须自己拿一条 MTRR 显式把这段标成 WC（必要时先清掉整段落在帧缓冲
- *   范围内的 UC 项）。
- * ============================================================================ */
+/* mtrr.c - 把帧缓冲那段物理内存标成 write-combining。
+ * M34 真机上踩的坑：光在页表里写 PAT=WC 不够。x86 的内存类型是 MTRR 和 PAT 取最严格，
+ * 固件一般会给 MMIO 空洞留一条 UC 型 variable MTRR，只要它压在帧缓冲上，页表写 WC 也照
+ * UC 跑，表现就是每写一个像素等一次总线。所以自己拿一条 MTRR 显式标 WC，必要时先把
+ * 覆盖这段的 UC 项清掉。 */
 
 #include <stdint.h>
 #include "mtrr.h"
@@ -33,9 +25,9 @@
 
 static uint64_t mtrr_entry_size(uint64_t mask)
 {
-    /* mask 的 bit 51:12 里，0 表示"大小"位，1 表示"必须匹配"位。
-     * 从 bit12 往上数连续多少个 0 位（也就是取反后连续的 1 位），
-     * 数到 k 个，大小就是 2^(12+k)。注意 bit11 是 V 位，不能去反了算进去。 */
+    /* mask 的 bit 51:12 里，0 表示"大小"位，1 表示"必须匹配"位。从 bit12 往上数连续多少个
+     * 0 位（取反之后也就是连续多少个 1 位），数到 k 个，大小就是 2^(12+k)。注意 bit11 是 V 位，
+     * 别把它反进去一起算。 */
     uint64_t t = (~mask) & PHYS_MASK_BITS;
     uint32_t n = 12u;
 
@@ -64,7 +56,7 @@ static void wbinvd_all(void)
     __asm__ volatile("wbinvd" : : : "memory");
 }
 
-/* ---- MTRR 布局小工具 ---- */
+/* MTRR 布局小工具 */
 
 static uint32_t free_slots(uint32_t vcnt)
 {
@@ -141,7 +133,7 @@ static uint64_t cover_range(uint32_t vcnt, uint64_t s, uint64_t e, uint64_t type
     return covered;
 }
 
-/* ---- 打印小工具（只用到 vga_print / vga_putchar，跟其它驱动一致） ---- */
+/* 打印小工具（只用到 vga_print / vga_putchar，跟其它驱动一致） */
 static void pr(const char *s)
 {
     vga_print(s, VGA_LIGHT_CYAN, VGA_BLACK);
@@ -267,9 +259,8 @@ uint64_t mtrr_wc_range(uint64_t base, uint64_t bytes)
     def = rdmsr64(MSR_MTRR_DEF_TYPE);
     end = base + bytes;
 
-    /* 先挑覆盖方案：优先"一条对齐的大 MTRR"，多盖 <=16MB 就接受 ——
-     * 帧缓冲基本都落在显卡 aperture 里，多标的这一点也是显存，不会伤到设备寄存器。
-     * 一条盖不住就退回逐块拼。 */
+    /* 先挑覆盖方案：优先一条对齐的大 MTRR，多盖 <=16MB 就接受。帧缓冲基本都落在显卡
+     * aperture 里，多标的这点也是显存，不会伤到设备寄存器。一条盖不住就退回逐块拼。 */
     super_sz = wc_super_size(base, bytes, 16ull * 1024ull * 1024ull);
     if (super_sz != 0ull) {
         plan_end = base + super_sz;
@@ -282,12 +273,10 @@ uint64_t mtrr_wc_range(uint64_t base, uint64_t bytes)
         return 0ull;
     }
 
-    /* 第二步：处理跟帧缓冲重叠的固件 UC 项。
-     * 为什么：x86 的内存类型是"MTRR 里最严格的那条胜出"，固件给 MMIO 留的 UC
-     * 项只要压在这段上，页表的 PAT=WC 就完全失效。
-     * 做法：把那条腾出来，先把它落在帧缓冲外面的部分用 UC 补回去（顺序不能反：
-     * 得先保证别的 MMIO 仍然不可缓存），最后再谈 WC 加速。
-     * 槽不够就整条不动 —— 宁可慢，也不拿错误的类型罩住别的 MMIO。 */
+    /* 第二步，处理跟帧缓冲重叠的固件 UC 项。x86 的内存类型是"MTRR 里最严格的那条胜出"，
+     * 固件给 MMIO 留的 UC 项只要压在这段上，页表里的 PAT=WC 就完全失效。做法是把那条腾出来，
+     * 先把它落在帧缓冲外面的部分用 UC 补回去。顺序不能反：得先保证别的 MMIO 仍然不可缓存，
+     * 最后再谈 WC 加速。槽不够就整条不动，宁可慢，也不拿错的类型罩住别处。 */
     for (i = 0u; i < vcnt; ++i) {
         uint64_t b = rdmsr64(MSR_PHYBASE0 + 2u * i);
         uint64_t m = rdmsr64(MSR_PHYMASK0 + 2u * i);

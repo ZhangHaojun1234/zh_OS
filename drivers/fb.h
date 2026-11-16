@@ -1,17 +1,8 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    drivers/fb.h
- * Version: 1.0
- * Brief:   线性帧缓冲（LFB）文字控制台，[ADD] M25。
- *
- * 背景：0xB8000 的文本模式分辨率是写死的（QEMU 下永远 80x25 / 720x400），
- * "调分辨率"在文本模式下没有意义。真正的做法是让 GRUB 把显卡切到图形模式
- * （VBE/GOP），内核拿到 Multiboot2 的 framebuffer 标签，自己用点阵字体把字画上去。
- * 这就是 Linux 的 fbcon 干的事。
- *
- * 几何完全由硬件给的值算出来：列 = 宽/8，行 = 高/16。
- * 800x600 -> 100x37，1024x768 -> 128x48，1280x720 -> 160x45。
- * ============================================================================ */
+/* fb.h - 线性帧缓冲（LFB）文字控制台的接口。
+ * 0xB8000 的文本模式分辨率是写死的，QEMU 下永远 80x25 / 720x400，想改分辨率没意义。
+ * 正经做法是让 GRUB 切图形模式（VBE/GOP），内核拿 Multiboot2 的 framebuffer 标签，
+ * 自己用点阵字体往上画 ， Linux 的 fbcon 就是这么干的。
+ * 几何全从硬件给的值算：列 = 宽/8，行 = 高/16。800x600 -> 100x37。 */
 
 #ifndef ZH_OS_FB_H
 #define ZH_OS_FB_H
@@ -53,10 +44,10 @@ uint32_t fb_scale(void);
 /* [ADD] M34：帧缓冲被 MTRR 覆盖成 WC 的字节数（0 = 还是 UC，会非常慢） */
 uint64_t fb_wc_bytes(void);
 
-/* [ADD] M34：`bench` —— 量一段显存写入的 cycles/byte，判断 WC 有没有生效 */
+/* [ADD] M34：`bench` ， 量一段显存写入的 cycles/byte，判断 WC 有没有生效 */
 int cmd_bench(int argc, char **argv);
 
-/* [ADD] M34：`memtype` —— 打印 MTRRdefType 与全部 variable MTRR */
+/* [ADD] M34：`memtype` ， 打印 MTRRdefType 与全部 variable MTRR */
 int cmd_memtype(int argc, char **argv);
 
 /* Shell 命令 videomode（M25） */

@@ -1,9 +1,4 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    kernel/console_hist.h
- * Version: 1.0
- * Brief:   带命令历史的行编辑器 read_line_with_history() 接口。
- * ============================================================================ */
+/* console_hist.h - read_line_with_history() 的声明 */
 
 #ifndef ZH_OS_KERNEL_CONSOLE_HIST_H
 #define ZH_OS_KERNEL_CONSOLE_HIST_H

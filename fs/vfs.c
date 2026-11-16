@@ -1,19 +1,8 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    fs/vfs.c
- * Version: 1.0
- * Brief:   挂载表 + 最长前缀路径解析 + cwd 的实现。
- *
- * 对应 Linux 的两件事：
- *   - vfs_resolve() ≈ path lookup 里"找到所属 vfsmount"那一步（这里用最长前缀匹配
- *     代替 dentry 树的向上回溯，因为我们没有真正的 dentry 缓存）；
- *   - vfs_list()/vfs_read() ≈ 通过 file_operations 间接调用具体文件系统，
- *     这里用 enum + switch 代替函数指针表（freestanding、没有 C++/trampoline 的讲究）。
- *
- * 关键约定：**挂载表空着的时候，一切行为与 M19 之前完全一致**。
- * 没有匹配到挂载点的路径，vfs_list/vfs_read 直接返回 VFS_ERR_NOENT，
- * 命令层看到这个码就回落到 ramfs —— 这才是纯增量。
- * ============================================================================ */
+/* vfs.c - 挂载表、最长前缀路径解析、cwd。
+ * vfs_resolve() 对应 Linux path lookup 里"找到所属 vfsmount"那一步，只是用最长前缀匹配
+ * 代替 dentry 树的向上回溯（因为没有真正的 dentry 缓存）。vfs_list/vfs_read 用 enum + switch
+ * 间接调到具体文件系统，不搞函数指针表。
+ * 约定：挂载表空着的时候行为跟 M19 之前一模一样，没匹配到挂载点的路径回落到 ramfs，这才叫纯增量。 */
 
 #include "vfs.h"
 
@@ -26,9 +15,7 @@ static vfs_mount_t g_mounts[VFS_MAX_MOUNTS];
 static char        g_cwd[VFS_PATH_MAX] = "/";
 static int         g_cwd_in_mount = 0;
 
-/* ------------------------------------------------------------------ */
 /* 小工具                                                             */
-/* ------------------------------------------------------------------ */
 
 static bool str_eq(const char *a, const char *b)
 {
@@ -70,9 +57,7 @@ static void strip_trailing_slash(char *p)
     }
 }
 
-/* ------------------------------------------------------------------ */
 /* 挂载表                                                             */
-/* ------------------------------------------------------------------ */
 
 void vfs_reset(void)
 {
@@ -165,9 +150,7 @@ uint32_t vfs_mount_count(void)
     return n;
 }
 
-/* ------------------------------------------------------------------ */
 /* 最长前缀匹配                                                       */
-/* ------------------------------------------------------------------ */
 
 /* 判断 path 是否以 prefix 开头，且前缀之后正好是 '\0' 或 '/'（避免 "/mntx" 命中 "/mnt"） */
 static bool prefix_match(const char *path, const char *prefix)
@@ -299,9 +282,7 @@ int vfs_resolve(const char *path, vfs_fs_t *fs, char *out_path, uint32_t cap)
     return 1;
 }
 
-/* ------------------------------------------------------------------ */
 /* 分发到具体文件系统                                                 */
-/* ------------------------------------------------------------------ */
 
 int vfs_list(const char *path)
 {
@@ -370,9 +351,7 @@ int vfs_under_mount(const char *path)
     return vfs_resolve(path, &fs, sub, sizeof(sub));
 }
 
-/* ------------------------------------------------------------------ */
 /* cwd                                                                */
-/* ------------------------------------------------------------------ */
 
 void vfs_set_cwd(const char *path)
 {
@@ -454,17 +433,15 @@ void vfs_join_cwd(char *out, uint32_t cap, const char *rel)
     out[n] = '\0';
 }
 
-/* ==================================================================== */
-/* [ADD] M24：VFS 的写路径 —— touch / rm 落到挂载的文件系统             */
+/* [ADD] M24：VFS 的写路径 ， touch / rm 落到挂载的文件系统             */
 /*                                                                    */
 /* M20 的 VFS 只会 list / read。写请求到不了 ext2，所以 `touch /mnt/x`  */
 /* 一直在 ramfs 里造一个同名节点（而 ramfs 根本没有 /mnt 这一层）。      */
 /* 这里补两个入口，形状照着 Linux 的 inode_operations：                */
 /*      vfs_create(path, data, len)   ≈ ->create()                     */
 /*      vfs_unlink(path)              ≈ ->unlink()                     */
-/* 没匹配到挂载点就返回 VFS_ERR_NOENT，命令层照旧回落 ramfs —— 这条   */
+/* 没匹配到挂载点就返回 VFS_ERR_NOENT，命令层照旧回落 ramfs ， 这条   */
 /* 回落是 M20 定下的规矩，绝不让根文件系统的行为被改动。                */
-/* ==================================================================== */
 
 /* ext2 的错误码 -> VFS 错误码（命令层只需要知道"大概哪一类错"） */
 static int ext2_to_vfs(int rc)

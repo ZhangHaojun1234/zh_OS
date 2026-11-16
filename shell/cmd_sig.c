@@ -1,19 +1,9 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    shell/cmd_sig.c
- * Version: 1.0
- * Brief:   M17 `sig` 命令：信号 + waitpid + Ctrl-C 三件事的自证。
- *
- * 做三件事：
- *   1) 在**内核**里造一个纯自旋进程（/bin/spin.elf 的那段循环是它自己的），
- *      在调度器里跑起来之前就给它置 SIGKILL —— 证明"pending 信号"会在它
- *      第一次从内核回 ring3 的那一刻生效。
- *   2) 跑 /bin/sigdemo.elf：父子都在 ring3，子自旋、父 kill + waitpid(137)。
- *   3) 打印计数：投递了几个、送达了几个、terminate 了几次。
- *
- * 为什么第 1 步能成立：调度器第一次进任务也是"从内核 -> ring3"，
- * 走的是同一条 interrupt_dispatch 出口，所以 task_check_signals() 一样会跑到。
- * ============================================================================ */
+/* cmd_sig.c - M17 的 sig 命令：信号、waitpid、Ctrl-C 三件事的自证。
+ * 一、在内核里造一个纯自旋进程，跑起来之前就先置 SIGKILL，证明 pending 信号会在它第一次
+ *     从内核回 ring3 的那一刻生效；
+ * 二、跑 /bin/sigdemo.elf，父子都在 ring3，子自旋、父 kill 加 waitpid 拿 137；
+ * 三、打印投递、送达、terminate 的计数。
+ * 第一步能成立，是因为调度器第一次进任务也走 interrupt_dispatch 出口，同样会过 task_check_signals()。 */
 
 #include "cmd_sig.h"
 
@@ -66,7 +56,7 @@ int cmd_sig(int argc, char **argv)
 
     info("M17 signals: kill() only marks a bit; delivery happens on the way back to ring3");
 
-    /* ---------- 第 1 段：内核侧投递 SIGKILL 给一个还没跑的自旋进程 ---------- */
+    /* 第 1 段：内核侧投递 SIGKILL 给一个还没跑的自旋进程 */
     before_send = task_signal_send_count();
     before_deliver = task_signal_deliver_count();
 
@@ -107,7 +97,7 @@ int cmd_sig(int argc, char **argv)
         sh_newline();
     }
 
-    /* ---------- 第 2 段：ring3 里的 sigdemo（fork + kill + waitpid） ---------- */
+    /* 第 2 段：ring3 里的 sigdemo（fork + kill + waitpid） */
     {
         uint64_t len = 0u;
         int dpid;

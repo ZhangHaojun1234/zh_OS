@@ -1,9 +1,4 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    drivers/ahci.c
- * Version: 1.0
- * Brief:   [ADD] M31：AHCI 端口寄存器、命令表 / FIS / PRDT 与一扇区读写。
- * ============================================================================ */
+/* ahci.c - M31: AHCI 端口寄存器、命令表 / FIS / PRDT，只做一扇区读写 */
 
 #include "ahci.h"
 
@@ -13,7 +8,7 @@
 #include "paging.h"
 #include "pci.h"
 
-/* --------------------------- 寄存器偏移 --------------------------- */
+/* 寄存器偏移 */
 #define AHCI_CAP        0x00u
 #define AHCI_GHC        0x04u
 #define AHCI_PI         0x0Cu
@@ -47,11 +42,9 @@
 #define SSTS_DET_OK   0x03u
 #define SIG_SATA      0x00000101u
 
-/* ----------------------- 内存里的三样"表" -----------------------
- * AHCI 的 DMA 只认物理地址。本内核的恒等映射让虚拟地址 == 物理地址，
- * 所以这些静态数组的地址直接当物理地址用。
- * 对齐是硬要求：命令表 1024、FIS 256、命令头(在命令表里)128。
- */
+/* 内存里的三样表。AHCI 的 DMA 只认物理地址，本内核恒等映射，虚拟地址等于物理地址，
+ * 所以这些静态数组的地址直接当物理地址用。对齐是硬要求：命令表 1024、FIS 256、
+ * 命令头（在命令表里）128。 */
 static uint8_t  g_cl[1024] __attribute__((aligned(1024)));    /* command list */
 static uint8_t  g_fis[256] __attribute__((aligned(256)));     /* received FIS */
 static uint8_t  g_ct[512]  __attribute__((aligned(128)));     /* command table */
@@ -136,9 +129,9 @@ static int ahci_cmd(uint8_t cmd, uint32_t lba, int is_write)
         ct[at + 5u] = 0u;
         ct[at + 6u] = 0u;
         ct[at + 7u] = 0u;
-        /* AHCI 1.3：偏移 8 是保留，DBC 在偏移 12（低 22 位 = 字节数-1，
-         * 最高位 I = 传输完成中断）。写错到偏移 8 的话控制器会认为
-         * DBC = 0，只搬 1 个字节然后报"完成"，数据缓冲仍然是 0。 */
+        /* AHCI 1.3 里偏移 8 是保留，DBC 在偏移 12（低 22 位 = 字节数 - 1，最高位 I 是
+         * 传输完成中断）。写到偏移 8 的话控制器当 DBC = 0，只搬 1 个字节就报"完成"，
+         * 数据缓冲还是 0。 */
         ct[at + 8u] = 0u;
         ct[at + 9u] = 0u;
         ct[at + 10u] = 0u;
@@ -180,9 +173,8 @@ static int ahci_port_start(uint32_t port)
     g_port = port;
     g_port_off = AHCI_PORT_BASE + port * AHCI_PORT_STRIDE;
 
-    /* 1) 停 ST + 关 FRE，等 CR 清零。
-     *    FRE 必须先关掉：PxCLB / PxFB 在 FRE=1 时写入会被控制器直接丢弃，
-     *    表面上"初始化成功"，实际 FIS 区还指向 0，命令永远不落地。 */
+    /* 1) 停 ST + 关 FRE，等 CR 清零。FRE 必须先关：PxCLB / PxFB 在 FRE=1 时写入会被控制器
+     *    直接丢掉，表面上"初始化成功"，实际 FIS 区还指着 0，命令永远不落地。 */
     cmd = ahci_read_reg(g_port_off + P_CMD);
     cmd &= ~(CMD_ST | CMD_FRE);
     ahci_write_reg(g_port_off + P_CMD, cmd);
@@ -190,10 +182,9 @@ static int ahci_port_start(uint32_t port)
         return -1;
     }
 
-    /* 2) 设备已就绪就别复位；需要复位时发 COMRESET 清 DET，然后
-     *    必须等到 SSTS.DET 回到 3（设备识别完成）才能发命令 ——
-     *    少了这一步，命令会被设备直接丢掉：CI 立刻清零、TFD 显示 DRDY、
-     *    数据一个字节都不搬，看起来"成功"但缓冲全是 0。 */
+    /* 2) 设备已经就绪就别复位；要复位时发 COMRESET 清 DET，然后必须等到 SSTS.DET 回到 3
+     *    （设备识别完成）才能发命令。少了这一步，命令会被设备直接丢掉：CI 立刻清零、
+     *    TFD 显示 DRDY、数据一个字节都不搬，看着"成功"但缓冲全是 0。 */
     if ((ahci_read_reg(g_port_off + P_SSTS) & SSTS_DET_MASK) != SSTS_DET_OK) {
         ahci_write_reg(g_port_off + P_SCTL, 1u);
         {
@@ -341,7 +332,7 @@ uint32_t ahci_port_signature(void)
     return g_ready ? ahci_read_reg(g_port_off + P_SIG) : 0u;
 }
 
-/* [ADD] M31：诊断用 —— 初始化失败后也要能把每个端口的寄存器读出来看 */
+/* [ADD] M31：诊断用 ， 初始化失败后也要能把每个端口的寄存器读出来看 */
 uint32_t ahci_port_sig_of(uint32_t i)
 {
     if (g_abar == (volatile uint32_t *)0 || i > 31u) {
@@ -366,7 +357,7 @@ uint32_t ahci_port_cmd_of(uint32_t i)
     return ahci_read_reg(AHCI_PORT_BASE + i * AHCI_PORT_STRIDE + P_CMD);
 }
 
-/* [ADD] M31：诊断 —— 发命令前后关键寄存器 */
+/* [ADD] M31：诊断 ， 发命令前后关键寄存器 */
 uint32_t ahci_dbg_hdr0(void)
 {
     return ((volatile uint32_t *)g_cl)[0];

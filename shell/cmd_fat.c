@@ -1,13 +1,5 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    shell/cmd_fat.c
- * Version: 1.0
- * Brief:   FAT16 只读的 3 个 Shell 命令：fatmount / fatls / fatcat。
- *
- * B 组第 3 个功能，纯增量「只添加，不修改」：本文件为新文件，命令表在
- * commands.c 末尾追加注册。FAT16 命令与 ramfs 的 ls / cat 完全隔离，
- * 不覆盖、不改变任何既有命令的输出与颜色。
- * ============================================================================ */
+/* cmd_fat.c - FAT16 只读的三个命令：fatmount / fatls / fatcat。
+ * 只往命令表末尾追加，既有命令的输出和颜色一点不动，跟 ramfs 的 ls / cat 也不互相干扰。 */
 
 #include "shell.h"    /* SHELL_CONTINUE / sh_println / err / ok / warn 宏 */
 #include "vga.h"      /* vga_putchar / VGA_LIGHT_GREY / VGA_BLACK */
@@ -57,9 +49,7 @@ static void emit_err_reason(const char *cmd, int rc)
     sh_println(SH_ERR, buf);
 }
 
-/* ------------------------------------------------------------------ */
 /* fatmount：挂载主通道从设备上的 FAT16                              */
-/* ------------------------------------------------------------------ */
 
 int cmd_fatmount(int argc, char **argv)
 {
@@ -76,9 +66,7 @@ int cmd_fatmount(int argc, char **argv)
     return SHELL_CONTINUE;
 }
 
-/* ------------------------------------------------------------------ */
 /* fatls [path]：列目录，目录亮蓝、文件浅灰、每行 4 个                */
-/* ------------------------------------------------------------------ */
 
 int cmd_fatls(int argc, char **argv)
 {
@@ -90,9 +78,7 @@ int cmd_fatls(int argc, char **argv)
     return SHELL_CONTINUE;
 }
 
-/* ------------------------------------------------------------------ */
 /* fatcat <path>：打印文件内容，超过 4KB 截断并亮黄提示               */
-/* ------------------------------------------------------------------ */
 
 int cmd_fatcat(int argc, char **argv)
 {

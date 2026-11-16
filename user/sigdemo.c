@@ -1,19 +1,8 @@
-/* ============================================================================
- * zh_OS 0.2beta (x86_64)
- * File:    user/sigdemo.c
- * Version: 0.2beta
- * Brief:   M17：kill + waitpid 的用户态证据（父子都在 ring3 里演）。
- *
- * 剧本：
- *   1) fork()：子进程进死循环（一次系统调用都不做）；
- *   2) 父进程 sleep 30 tick（300ms），让子在 ring3 里真的转起来；
- *   3) 父进程 kill(子pid, SIGKILL) —— 只是往内核的 pending 位图里置一位；
- *   4) 子进程下一次从时钟中断返回 ring3 之前被内核杀掉，退出码 = 128+9 = 137；
- *   5) 父进程 waitpid(子pid) 精确等这一个孩子，拿回 137。
- *
- * 判据：拿回 137（而不是 -1、也不是 9）。137 这个数字是 Linux 里
- *       WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL 的等价物。
- * ============================================================================ */
+/* sigdemo.c - M17 的用户态证据：kill 加 waitpid，父子都在 ring3 里演。
+ * fork 出子进程进死循环，一次系统调用都不做；父进程 sleep 30 tick（300ms）让子真的转起来；
+ * 然后 kill(子pid, SIGKILL)，只是往内核的 pending 位图里置一位；子在下一次从时钟中断回 ring3 前被杀，
+ * 退出码 128+9=137；父进程 waitpid 精确等这一个孩子，拿回 137。
+ * 137 就是 Linux 里 WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL 的等价物。 */
 
 typedef unsigned long u64;
 typedef long i64;

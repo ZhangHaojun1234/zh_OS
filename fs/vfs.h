@@ -1,19 +1,8 @@
-/* ============================================================================
- * zh_OS 0.2beta (x86_64)
- * File:    fs/vfs.h
- * Version: 0.2beta
- * Brief:   最小可用的 VFS：挂载表 + 最长前缀路径解析 + cwd。
- *
- * M20，纯增量：把三套各自为政的文件系统塞进**同一个命名空间**。
- * Linux 那边是 super_block / mount / vfsmount / dentry 一堆结构；
- * 这里只保留真正起作用的两件东西：
- *
- *   1) 挂载表：{ 挂载点前缀, 文件系统种类, 该 FS 的 list/read 函数指针 }
- *   2) 路径解析：/mnt/docs/note.txt -> 最长前缀匹配 /mnt -> 交给 ext2，剩下的 /docs/note.txt
- *
- * 没有挂载点匹配上的路径**原样交回 ramfs**（root 文件系统），这样既有命令的行为
- * 一个字节都不变：mount 表空着的时候，ls / cd / cat 走的就是 M1-M18 那条老路。
- * ============================================================================ */
+/* vfs.h - 最小可用的 VFS：挂载表加最长前缀解析加 cwd，把三套文件系统塞进同一个命名空间。
+ * Linux 那边是 super_block / mount / vfsmount / dentry 一堆，这里只留真正起作用的两样：
+ * 挂载表 { 挂载点前缀, 文件系统种类, 该 FS 的 list/read }；
+ * 路径解析：/mnt/docs/note.txt 先最长前缀匹配到 /mnt，交给 ext2，剩下 /docs/note.txt。
+ * 没匹配上的原样交回 ramfs，所以 mount 表空着时 ls / cd / cat 走的还是 M1-M18 那条老路。 */
 
 #ifndef ZH_OS_FS_VFS_H
 #define ZH_OS_FS_VFS_H
@@ -85,9 +74,7 @@ int vfs_in_mount_cwd(void);      /* 1 = 当前 cwd 在某个挂载点里 */
 /* 把 "cwd" 和相对路径 rel 拼成绝对路径（处理 "./" 与 ".."），写进 out。 */
 void vfs_join_cwd(char *out, uint32_t cap, const char *rel);
 
-/* ------------------------------------------------------------------ */
 /* Shell 命令：mount / umount / mounts                               */
-/* ------------------------------------------------------------------ */
 int cmd_mount(int argc, char **argv);
 int cmd_umount(int argc, char **argv);
 int cmd_mounts(int argc, char **argv);

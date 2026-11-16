@@ -1,14 +1,7 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    drivers/fb.c
- * Version: 1.0
- * Brief:   线性帧缓冲文字控制台，[ADD] M25。
- *
- * 三件事：
- *   1) 从 Multiboot2 标签里拿到 framebuffer（地址/宽/高/行跨距/色深）
- *   2) 把那块物理内存映射进内核地址空间（它常在 0xFD000000，超过恒等映射的 1GB）
- *   3) 用 8x16 点阵字体画字：清屏、写字符、滚屏
- * ============================================================================ */
+/* fb.c - M25 的线性帧缓冲文字控制台，干三件事：
+ * 1) 从 Multiboot2 标签拿 framebuffer（地址、宽高、行跨距、色深）；
+ * 2) 把那块物理内存映射进内核地址空间（常在 0xFD000000，超出恒等映射的 1GB）；
+ * 3) 用 8x16 点阵画字：清屏、写字符、滚屏。 */
 
 #include <stdint.h>
 #include "fb.h"
@@ -34,23 +27,20 @@ static uint32_t g_cols = 0u, g_rows = 0u;
 static uint32_t g_cx = 0u, g_cy = 0u;
 static uint32_t g_fg = 0xC8C8C8u, g_bg = 0x000000u;
 
-/* [ADD] M34：字体缩放倍数。真机 2880x1800 面板下 res 用不了（Bochs dispi 不存在），
- * 唯一能让字变大的办法是把 8x16 字模按 NxN 像素块画出来。格子变成 8N x 16N，
- * 行列数按新格子算，逻辑上等价于"分辨率降 N 倍"。 */
+/* [ADD] M34：字体缩放倍数。真机 2880x1800 面板上 res 用不了（没有 Bochs dispi），
+ * 想让字变大只能把 8x16 字模按 NxN 像素块画出来。格子变成 8N x 16N，行列数按新格子重算，
+ * 逻辑上等于把分辨率降 N 倍。 */
 static uint32_t g_scale = 1u;
 
 static uint32_t cell_w(void) { return FONT_W * g_scale; }
 static uint32_t cell_h(void) { return FONT_H * g_scale; }
 
-/* [ADD] M26：整屏字符缓冲。
- *
- * 为什么必须有：换分辨率以前的实现是"直接往帧缓冲画像素"，屏幕上的字就是像素本身，
- * 一旦换模式（旧的显存内容作废），上一屏的文字就再也找不回来了 —— 所以 res 只能清屏。
- * Linux 的 fbcon 能重绘，是因为它上面还有一层 vc（virtual console）保存着字符。
- *
- * 这里存的就是那一层：每个格子记 字符 + 前景/背景调色板号（各 1 字节，不存 RGB，
- * 省空间也省得换色时失真）。480x160 是上限（3840x2160 的 8x16 网格正好这么密），
- * 实际只用能看见的 g_rows/g_cols。
+/* [ADD] M26：整屏字符缓冲。为什么必须有：换分辨率以前是直接往帧缓冲画像素，屏上的字
+ * 就是像素本身，一换模式旧显存内容作废，上一屏的字再也找不回来，所以 res 只能清屏。
+ * Linux 的 fbcon 能重绘，是因为它上面还有一层 vc（virtual console）存着字符。
+ * 这里存的就是那一层：每格记字符加前景/背景调色板号，各 1 字节，不存 RGB，省空间，
+ * 换色时也不会失真。480x160 是上限（3840x2160 的 8x16 网格正好这么密），实际只用看得见的
+ * g_rows / g_cols。
  */
 #define FB_BUF_COLS 480u   /* [ADD] M29：真机 2880x1800 = 360x112，留到 3840x2160 */
 #define FB_BUF_ROWS 160u
@@ -157,7 +147,7 @@ static void fill_all(uint32_t rgb)
     }
 }
 
-/* ---- [ADD] M26：字符缓冲的四个基本动作 ---- */
+/* [ADD] M26：字符缓冲的四个基本动作 */
 
 /* 缓冲里清掉所有可见格子（不动显存，显存由调用方 fill_all） */
 static void buf_clear(void)
@@ -201,7 +191,7 @@ static void draw_cell(uint32_t cx, uint32_t cy)
         fill_cell(cx, cy, bg);
         return;
     }
-    /* [ADD] M34：32bpp 快路径 —— 每行只算一次行指针，行内连续写；
+    /* [ADD] M34：32bpp 快路径 ， 每行只算一次行指针，行内连续写；
      * 缩放时把每个字模像素展开成 g_scale 个连续字。 */
     if (g_bpp == 32u) {
         uint32_t x0 = cx * cell_w();
@@ -313,7 +303,7 @@ int fb_init(uint32_t mb2_info)
         return 0;
     }
     g_base = (uint8_t *)(uintptr_t)g_phys;
-    /* [ADD] M34：页表的 PAT 只在一半 —— MTRR 里若有 UC 项压着，WC 就失效。
+    /* [ADD] M34：页表的 PAT 只在一半 ， MTRR 里若有 UC 项压着，WC 就失效。
      * 这里再拿一条 MTRR 把整段显式标成 WC，真机宽度 2880 时差别是几十倍。 */
     g_wc_bytes = mtrr_wc_range((uint64_t)g_phys, (uint64_t)g_pitch * g_h);
     g_cols = g_w / cell_w();
@@ -362,7 +352,7 @@ void fb_scroll(void)
     uint64_t i;
 
     for (i = 0u; i + 8u <= bytes; i += 8u) {
-        /* [ADD] M34：8 字节一次拷贝 —— 大分辨率下一屏 20MB，按字节搬太慢 */
+        /* [ADD] M34：8 字节一次拷贝 ， 大分辨率下一屏 20MB，按字节搬太慢 */
         *(uint64_t *)(void *)(dst + i) = *(uint64_t *)(void *)(src + i);
     }
     for (; i < bytes; ++i) {
@@ -425,9 +415,7 @@ void fb_putchar(char c, enum vga_color fg, enum vga_color bg)
     }
 }
 
-/* ------------------------------------------------------------------ */
 /* Shell 命令 videomode：把当前几何报出来（也是"调分辨率生效了没有"的判据） */
-/* ------------------------------------------------------------------ */
 
 static void put_u32(uint32_t v)
 {
@@ -465,7 +453,6 @@ int cmd_videomode(int argc, char **argv)
     return 0;
 }
 
-/* ================================================================== */
 /* [ADD] M25 第二部分：运行时换分辨率（Bochs VBE dispi 接口）        */
 /*                                                                  */
 /* 为什么用这个接口：GRUB 只在启动那一刻定模式（Multiboot2 帧缓冲标签   */
@@ -473,7 +460,6 @@ int cmd_videomode(int argc, char **argv)
 /* 说话。x86_64 长模式下再也调不到 int 10h，QEMU 的 VGA 正好提供 Bochs  */
 /* dispi 寄存器组（端口 0x1CE 索引 / 0x1CF 数据），能直接改模式。       */
 /* 真机没有这套接口 -> 读 ID 不是 0xB0Cx 就直接失败，绝不乱写端口。     */
-/* ================================================================== */
 
 #define VBE_DISPI_INDEX_ID        0x0u
 #define VBE_DISPI_INDEX_XRES      0x1u
@@ -519,14 +505,11 @@ int fb_set_mode(uint32_t w, uint32_t h, uint32_t bpp)
         return 0;
     }
 
-    /* [ADD] M27：先把新尺寸要用的帧缓冲映射出来，再切模式。
-     *
-     * 启动时 fb_init 只按 GRUB 给的那一档建过页表（1280x800x32 -> 5120*800 ≈ 4MB），
-     * 而 1920x1080x32 需要 1920*4*1080 ≈ 8.3MB —— 不补映射就写像素，写到 4MB 之后
-     * 立刻 #PF（error code 0x2：write + page not present），表现就是 KERNEL PANIC。
-     *
-     * paging_map_2mb_range 对已经映射过的 2MB 页只是覆盖重写同一项，不会重复吃 pd_pool，
-     * 所以放大/缩小分辨率都可以反复调用。 */
+    /* [ADD] M27：先把新尺寸要用的帧缓冲映射出来，再切模式。启动时 fb_init 只按 GRUB 给的
+     * 那一档建过页表（1280x800x32 约 4MB），1920x1080x32 要 1920*4*1080 约 8.3MB，不补映射就写
+     * 像素的话，写到 4MB 之后立刻 #PF（error code 0x2，write + page not present），
+     * 看着就是 KERNEL PANIC。paging_map_2mb_range 对映射过的 2MB 页只是覆盖重写同一项，
+     * 不会重复吃 pd_pool，所以放大缩小都能反复调。 */
     if (!paging_map_2mb_range_type((uint64_t)g_phys,
                                    (uint64_t)w * (uint64_t)(bpp / 8u) * (uint64_t)h, 1)) {
         return 0;
@@ -538,7 +521,7 @@ int fb_set_mode(uint32_t w, uint32_t h, uint32_t bpp)
     dispi_write(VBE_DISPI_INDEX_BPP, (uint16_t)bpp);
     dispi_write(VBE_DISPI_INDEX_ENABLE, VBE_DISPI_ENABLED | VBE_DISPI_LFB_ENABLED);
 
-    /* 线性帧缓冲的基址和行跨距 —— 基址不变，跨距按新宽度算 */
+    /* 线性帧缓冲的基址和行跨距 ， 基址不变，跨距按新宽度算 */
     uint32_t old_rows = g_rows, old_cols = g_cols, old_used = g_used_rows;
     uint32_t keep, i2, x2;
 
@@ -559,14 +542,11 @@ int fb_set_mode(uint32_t w, uint32_t h, uint32_t bpp)
     dispi_write(VBE_DISPI_INDEX_ENABLE, VBE_DISPI_DISABLED);
     dispi_write(VBE_DISPI_INDEX_ENABLE, VBE_DISPI_ENABLED | VBE_DISPI_LFB_ENABLED);
 
-    /* [ADD] M26 / [ADD] M27：把旧屏幕“真正用过的最后 keep 行”搬到新屏幕，再整屏重绘。
-     *
-     * 对齐方式按“新屏装不装得下”决定，而不是一律贴底：
-     *  - keep == g_rows（历史够多，正好填满新屏）：搬最后 g_rows 行，屏满，无空白；
-     *  - keep <  g_rows（1280x800 换到 1920x1080 就多出 17 行）：历史贴顶部、
-     *    光标紧跟历史最后一行 —— 否则历史被压到屏幕最底下、中间空一大片，
-     *    看起来就像屏坏了（1920x1080 实测就是这样）。
-     * src 起点恒 >= dst 起点，所以正序搬不会踩到还没读的行。 */
+    /* [ADD] M26 / M27：把旧屏幕真正用过的最后 keep 行搬到新屏幕，再整屏重绘。对齐方式看新屏
+     * 装不装得下，不是一律贴底：keep == g_rows 时历史够多、正好填满新屏，搬最后 g_rows 行，
+     * 屏幕满，没有空白；keep < g_rows 时（1280x800 换到 1920x1080 就多出 17 行）历史贴顶、
+     * 光标紧跟历史最后一行。否则历史被压到最底下、中间空一大片，看着像屏坏了，
+     * 1920x1080 实测就是这样。src 起点恒 >= dst 起点，正序搬不会踩到还没读的行。 */
     keep = old_used < g_rows ? old_used : g_rows;
     if (keep > FB_BUF_ROWS) {
         keep = FB_BUF_ROWS;
@@ -621,9 +601,8 @@ int cmd_res(int argc, char **argv)
         w = w * 10u + (uint32_t)(*s - '0');
         ++s;
     }
-    /* [ADD] M26：分隔符放宽 —— 字母 x / X / 星号 * 都认。
-     * 装文档里写成 1280x800 有人会照着敲"×"（乘号），键盘上根本打不出来；
-     * 星号是随手能敲的，所以直接收。 */
+    /* [ADD] M26：分隔符放宽，字母 x / X / 星号 * 都认。文档里写 1280x800，有人会照着敲
+     * "×"（乘号），键盘上根本打不出来；星号随手能敲，干脆收下。 */
     if (*s != 'x' && *s != 'X' && *s != '*') {
         vga_print("res: expected <width>x<height>  (x or *)\n", VGA_LIGHT_RED, VGA_BLACK);
         return 0;
@@ -657,15 +636,13 @@ int cmd_res(int argc, char **argv)
     return 0;
 }
 
-/* ================================================================== */
-/* [ADD] M34：字体缩放 —— 真机唯一可用的"放大字"手段                  */
+/* [ADD] M34：字体缩放 ， 真机唯一可用的"放大字"手段                  */
 /*                                                                    */
 /* 真机 Intel 核显没有 Bochs dispi 那套寄存器，res 必然被拒；而        */
 /* ExitBootServices 之后内核也调不到 GOP 的 SetMode。所以分辨率只能靠  */
 /* GRUB 启动时定。定了之后如果还是嫌字小（2880x1800 面板 360x112 格）， */
 /* 就只能在软件层把字模放大：8x16 的每一位画成 NxN 像素块，格子变      */
-/* 8Nx16N，行列数相应减少 —— 等效于把"逻辑分辨率"降低 N 倍。           */
-/* ================================================================== */
+/* 8Nx16N，行列数相应减少 ， 等效于把"逻辑分辨率"降低 N 倍。           */
 
 uint32_t fb_scale(void)
 {
@@ -743,7 +720,7 @@ uint64_t fb_wc_bytes(void)
     return g_wc_bytes;
 }
 
-/* [ADD] M34：`bench` —— 往显存里成片写 32 位字，用 RDTSC 数周期。
+/* [ADD] M34：`bench` ， 往显存里成片写 32 位字，用 RDTSC 数周期。
  * 判断 WC 是否生效看 cycles/byte：WC 大约 1~3，UC 会到几十上百。 */
 int cmd_bench(int argc, char **argv)
 {

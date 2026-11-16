@@ -1,25 +1,10 @@
-/* ============================================================================
- * zh_OS 0.2beta (x86_64)
- * File:    user/sigcatch.c
- * Version: 0.2beta
- * Brief:   M18 证据一：**用户态自己的 handler**（signal() + sigreturn）。
- *
- * 这个程序和 sigdemo.c 的区别只有一句话：
- *   sigdemo 的 SIGKILL 是**内核替我死**；这里 ^C 送来的 SIGINT 是**我自己的函数**接管。
- *
- * 剧本：
- *   1) signal(SIGINT, on_sigint)：把 handler 地址交给内核；
- *   2) 进一个带计数器的循环（每轮 sleep 5 tick = 50ms），边跑边打印 "."；
- *   3) 外面按 Ctrl-C：内核把 pending 位置起来，在下一次回 ring3 前
- *      ① 把当前整帧存进 TCB；② 用户栈上压蹦床地址；③ rip 改成 on_sigint；
- *   4) on_sigint 打印一行、把 caught 置 1，然后 `ret` -> 蹦床 -> int 0x80(24)
- *      -> 内核把 22 个 qword 原样扣回来；
- *   5) 循环从**被打断的那一刻**继续：计数器和局部变量都还在原位（这就是判据），
- *      发现 caught 后正常 exit(42)。
- *
- * 判据：屏幕上出现 "[sigcatch] back in the *same* loop, counter=NN"，且 NN 紧接着
- *       被打断时的值（说明 rip/rsp/rax 全回来了），最后退出码 42。
- * ============================================================================ */
+/* sigcatch.c - M18 证据一：用户态自己的 handler（signal() + sigreturn）。跟 sigdemo.c 的差别
+ * 就一句：那边 SIGKILL 是内核替我死，这里 ^C 送来的 SIGINT 由我自己的函数接管。
+ * 剧本：signal(SIGINT, on_sigint) 把 handler 地址交给内核，进循环每 5 tick 打一个点；外面按
+ * Ctrl-C，内核置 pending，在下次回 ring3 前把当前整帧存进 TCB、用户栈压蹦床地址、rip 改成
+ * on_sigint；handler 打一行、置 caught，ret 到蹦床，int 0x80(24) 把 22 个 qword 原样扣回来；
+ * 循环从被打断那一刻继续，计数器和局部变量都在原位，最后 exit(42)。
+ * 判据是屏幕上出现 [sigcatch] back in the *same* loop, counter=NN，NN 紧接被打断时的值。 */
 
 typedef unsigned long u64;
 typedef long i64;
@@ -85,7 +70,7 @@ static void print_u64(u64 value)
  * 它被内核"硬插"到执行流里，入口状态和一个普通函数调用的函数体一样：
  *   - rdi = 信号号（所以参数声明成 i64 sig）
  *   - rsp 指向一个"返回地址"槽，槽里是内核写的蹦床地址
- * 因此**不能再往栈上多压东西**：这里的返回地址是内核伪造的，不是调用者压的。
+ * 因此不能再往栈上多压东西：这里的返回地址是内核伪造的，不是调用者压的。
  * 函数正常 `ret` 就会跳进蹦床，由内核把整帧还回去。
  */
 static void on_sigint(i64 sig)

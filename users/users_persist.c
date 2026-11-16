@@ -1,14 +1,6 @@
-/* ============================================================================
- * zh_OS 0.2beta (x86_64)
- * File:    users/users_persist.c
- * Version: 0.2beta
- * Brief:   用户表磁盘持久化（LBA 200 起 8 扇区，小端序列化）。
- *
- * B 组第 2 个功能（ATA PIO + 用户表持久化）的纯增量新增文件。
- * 依赖 drivers/ata.c 的 LBA28 读写与 drivers/ata.h 的错误码；
- * 通过 users.c 末尾追加的 user_table_entry() / user_table_reset_and_load()
- * 读写内存账户表，不改动任何既有用户逻辑。
- * ============================================================================ */
+/* users_persist.c - 用户表落盘：LBA 200 起八个扇区，小端序列化。
+ * 用 drivers/ata.c 的 LBA28 读写和 drivers/ata.h 的错误码，通过 users.c 末尾追加的
+ * user_table_entry() / user_table_reset_and_load() 存取内存账户表，既有用户逻辑一行没改。 */
 
 #include "users.h"
 #include "ata.h"
@@ -17,7 +9,7 @@
 /* 4KB 缓冲（静态 .bss，初值 0；每次落盘前整体清零）。 */
 static uint8_t g_persist_buf[4096u];
 
-/* ---- 小端编解码助手（freestanding 无 libc，自己实现保证字节序明确） ---- */
+/* 小端编解码助手（freestanding 无 libc，自己实现保证字节序明确） */
 
 static void put_u32_le(uint8_t *p, uint32_t v)
 {

@@ -1,18 +1,7 @@
-/* ============================================================================
- * zh_OS 0.2beta (x86_64)
- * File:    user/cowdemo.c
- * Version: 0.2beta
- * Brief:   M15：写时复制（copy-on-write）fork 的用户态证据。
- *
- * 内核那边已经不需要这个程序说明任何事 —— 它的任务是证明**语义没坏**：
- *   - 父进程 fork 之后，父子看到同一份内存（g_value 相同）；
- *   - 子进程改自己的 g_value，父进程**看不到**（写时复制真的复制了一份）；
- *   - 父进程自己改，子进程也看不到；
- *   - 而且这些都不需要内核在 fork 时复制整页 —— 那是 `cow` 命令统计里的数字。
- *
- * 判据写在最后一行：[cowdemo] child=0xaaaa parent=0x5555 original=0x1111
- * 父进程在 wait() 之后仍然读到 0x1111 的"自己的副本"，才说明两边的页真的分家了。
- * ============================================================================ */
+/* cowdemo.c - M15 写时复制的用户态证据。内核那边不需要它说明什么，它只管证明语义没坏：fork
+ * 之后父子看到同一份内存（g_value 相同），子改自己的父看不到，父改子也看不到。判据是最后那行
+ * [cowdemo] child=0xaaaa parent=0x5555 original=0x1111，父进程 wait() 之后读到的还是自己那份
+ * 0x1111，说明两边的页真分家了。fork 时一页都没复制这件事，看 cow 命令的统计。 */
 
 typedef unsigned long u64;
 
@@ -86,7 +75,7 @@ void _start(unsigned long argc, char **argv)
         sys_call(ZH_SYS_EXIT, 1u, 0u, 0u);
     }
     if (pid == 0u) {
-        /* ---- 子进程：写自己的副本 ---- */
+        /* 子进程：写自己的副本 */
         g_value = 0xAAAAu;                 /* <-- 这里会触发一次 COW 缺页 */
         ++g_readings;
         puts1("[child ] after my write: g_value=");
@@ -97,7 +86,7 @@ void _start(unsigned long argc, char **argv)
         sys_call(ZH_SYS_EXIT, 0u, 0u, 0u);
     }
 
-    /* ---- 父进程：也写自己的副本，然后等子进程 ---- */
+    /* 父进程：也写自己的副本，然后等子进程 */
     g_value = 0x5555u;                     /* <-- 也会触发一次 COW 缺页 */
     ++g_readings;
     puts1("[parent] after my write: g_value=");

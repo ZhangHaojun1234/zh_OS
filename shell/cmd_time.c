@@ -1,9 +1,4 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    shell/cmd_time.c
- * Version: 1.0
- * Brief:   uptime（PIT tick 换算）与 date（CMOS RTC 读取）两个新命令。
- * ============================================================================ */
+/* cmd_time.c - uptime（PIT tick 换算）和 date（读 CMOS RTC）两个命令 */
 
 #include "cmd_time.h"
 
@@ -14,7 +9,6 @@
 
 /*
  * 时间来源
- * --------
  * uptime 用 drivers/pit.c 的 pit_get_uptime_seconds()（PIT 100Hz tick 换算）。
  * date 直接读 CMOS RTC：索引端口 0x70、数据端口 0x71，
  * 寄存器 0x00 秒 / 0x02 分 / 0x04 时 / 0x07 日 / 0x08 月 / 0x09 年，
@@ -101,9 +95,7 @@ static void put4(char *buf, uint32_t value)
     buf[3] = (char)('0' + (value % 10u));
 }
 
-/* ------------------------------------------------------------------ */
 /* uptime                                                             */
-/* ------------------------------------------------------------------ */
 
 int cmd_uptime(int argc, char **argv)
 {
@@ -126,9 +118,7 @@ int cmd_uptime(int argc, char **argv)
     return SHELL_CONTINUE;
 }
 
-/* ------------------------------------------------------------------ */
 /* date                                                               */
-/* ------------------------------------------------------------------ */
 
 int cmd_date(int argc, char **argv)
 {

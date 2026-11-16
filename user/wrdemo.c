@@ -1,16 +1,7 @@
-/* ============================================================================
- * zh_OS 0.2beta (x86_64)
- * File:    user/wrdemo.c
- * Version: 0.2beta
- * Brief:   M10 演示（文件半）：ring3 程序自己 creat / write / close，再 open 读回来。
- *
- * 验证的是"文件内容真的落进文件系统"：
- *   1) creat("/home/zh/m10.txt") 拿到写模式 fd；
- *   2) 往同一个 fd 写两段（第二段是**追加**，文件变长）；
- *   3) close 之后用**只读** open 重新打开同一个路径，把内容读出来打印。
- * 读出来的字节是本进程刚才写进去的 —— 说明内容经过了 ramfs 的节点，而不是某个
- * 临时变量。全过 exit(0)，否则 exit(9)。
- * ============================================================================ */
+/* wrdemo.c - M10 演示（文件半）：ring3 程序自己 creat / write / close，再 open 读回来。
+ * creat("/home/zh/m10.txt") 拿写模式 fd；往同一个 fd 写两段，第二段是追加，文件会变长；
+ * close 之后用只读 open 重新打开同一个路径，把内容读出来打印。
+ * 读出来的字节是刚刚写进去的，说明内容经过了 ramfs 节点，不是留在某个临时变量里。全过 exit(0)，否则 exit(9)。 */
 
 typedef unsigned long u64;
 
@@ -93,7 +84,7 @@ void _start(void)
 
     print_str("wr demo: a ring3 program creates and writes a real file\n");
 
-    /* ---- 1) creat ---- */
+    /* 1) creat */
     fd = sys_call(ZH_SYS_CREAT, (u64)(unsigned long)path, 0u, 0u);
     print_str("  creat(\"/home/zh/m10.txt\") -> fd ");
     if (fd == (u64)-1) {
@@ -103,7 +94,7 @@ void _start(void)
     print_u64(fd);
     print_str("\n");
 
-    /* ---- 2) 写两段（第二段是追加） ---- */
+    /* 2) 写两段（第二段是追加） */
     n = sys_call(ZH_SYS_FWRITE, fd, (u64)(unsigned long)line1, len1);
     print_str("  write(fd, ");
     print_u64(len1);
@@ -131,7 +122,7 @@ void _start(void)
         ++fail;
     }
 
-    /* ---- 3) 重新打开，读回内容 ---- */
+    /* 3) 重新打开，读回内容 */
     fd = sys_call(ZH_SYS_OPEN, (u64)(unsigned long)path, 0u, 0u);
     print_str("  open(\"/home/zh/m10.txt\") again -> fd ");
     if (fd == (u64)-1) {

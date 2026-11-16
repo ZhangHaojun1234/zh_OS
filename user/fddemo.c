@@ -1,17 +1,7 @@
-/* ============================================================================
- * zh_OS 0.2beta (x86_64)
- * File:    user/fddemo.c
- * Version: 0.2beta
- * Brief:   M9 演示：一个 ring3 程序自己 open / read / close 一个文件。
- *
- * 它验证的是 fd 语义本身（Linux 里 fd 只是一张表的**下标**）：
- *   1) open("/bin/hello.elf") 返回一个小整数 fd；
- *   2) read(fd, 4) 读到的 4 个字节必须是 7f 45 4c 46 —— ELF 的魔数；
- *   3) 再 read 4 字节，偏移自动前移（读到的是魔数之后的字节，与第一次不同）；
- *   4) close(fd) 之后同一个 fd 不能再读（返回 -1）—— fd 已失效；
- *   5) open 一个不存在的路径返回 -1；open 一个目录也返回 -1。
- * 全部通过则 exit(0)，否则 exit(9)。屏幕上一个字都不是内核替它读的。
- * ============================================================================ */
+/* fddemo.c - M9 演示：一个 ring3 程序自己 open / read / close。验的是 fd 语义本身：
+ * open("/bin/hello.elf") 拿到一个小整数 fd；read(fd, 4) 必须是 7f 45 4c 46（ELF 魔数）；
+ * 再 read 4 字节，偏移自动前移，内容跟第一次不同；close 之后同一个 fd 读不了，返回 -1；
+ * open 不存在的路径、open 一个目录，也都返回 -1。全过 exit(0)，否则 exit(9)。 */
 
 typedef unsigned long u64;
 
@@ -95,7 +85,7 @@ void _start(void)
 
     print_str("fd demo: I am a ring3 program, I will open/read/close myself\n");
 
-    /* ---- 1) open ---- */
+    /* 1) open */
     fd = sys_call(ZH_SYS_OPEN, (u64)(unsigned long)path, 0u, 0u);
     print_str("  open(\"/bin/hello.elf\") -> fd ");
     if (fd == (u64)-1) {
@@ -105,7 +95,7 @@ void _start(void)
     print_u64(fd);
     print_str("\n");
 
-    /* ---- 2) 读前 4 字节：ELF 魔数 ---- */
+    /* 2) 读前 4 字节：ELF 魔数 */
     n = sys_call(ZH_SYS_READ, fd, (u64)(unsigned long)buf, 4u);
     print_str("  read(fd, 4) -> ");
     print_u64(n);
@@ -125,7 +115,7 @@ void _start(void)
         print_str("  ^ 7f 45 4c 46 = ELF magic, the fd really reached the file\n");
     }
 
-    /* ---- 3) 再读 4 字节：偏移自动前移 ---- */
+    /* 3) 再读 4 字节：偏移自动前移 */
     n = sys_call(ZH_SYS_READ, fd, (u64)(unsigned long)buf, 4u);
     print_str("  read(fd, 4) again -> ");
     print_u64(n);
@@ -138,7 +128,7 @@ void _start(void)
         ++fail;
     }
 
-    /* ---- 4) close 之后 fd 失效 ---- */
+    /* 4) close 之后 fd 失效 */
     n = sys_call(ZH_SYS_CLOSE, fd, 0u, 0u);
     print_str("  close(fd) -> ");
     print_u64(n);
@@ -155,7 +145,7 @@ void _start(void)
         ++fail;
     }
 
-    /* ---- 5) 打开不存在的文件 / 打开目录 ---- */
+    /* 5) 打开不存在的文件 / 打开目录 */
     n = sys_call(ZH_SYS_OPEN, (u64)(unsigned long)missing, 0u, 0u);
     print_str("  open(\"/bin/nope.elf\") -> ");
     if (n == (u64)-1) {

@@ -1,19 +1,7 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    fs/ext2.c
- * Version: 1.0
- * Brief:   ext2 只读实现：超级块 -> 块组描述符 -> inode 表 -> inode -> 目录项
- *          -> 数据块（直接块 / 一级间接 / 二级间接）。读 ATA 主通道「主设备」
- *          （QEMU -drive if=ide,index=0）。
- *
- * M19，纯增量「只添加，不修改」：
- *   - 只读：不写盘、不建目录、不删文件（写 ext2 是 M20 的事）。
- *   - 只解析 rev0/rev1 的静态 inode，不支持 extent（那是 ext4 的东西）。
- *   - 复用 drivers/ata 的 ata_read_sector（B2 的 PIO 接口一行未改）。
- *   - 不触碰 ramfs / FAT16，ext2ls / ext2cat 与 ls / cat / fatls 完全隔离。
- *
- * freestanding：不能调 memcpy/memset，所有拷贝都是本文件里的小循环。
- * ============================================================================ */
+/* ext2.c - M19 只读 ext2：超级块 -> 块组描述符 -> inode 表 -> inode -> 目录项 -> 数据块
+ * （直接块 / 一级间接 / 二级间接）。读主通道主设备，QEMU 用 if=ide,index=0。
+ * 只读，不写盘不建目录不删文件；只认 rev0/rev1 的静态 inode，不碰 extent（那是 ext4 的事）；
+ * 复用 ata_read_sector，跟 ramfs、FAT16 完全隔离。freestanding 没有 memcpy/memset，拷贝都是本地小循环。 */
 
 #include "ext2.h"
 
@@ -22,9 +10,7 @@
 #include "../drivers/ata.h"   /* ata_read_sector */
 #include "../drivers/vga.h"   /* vga_print / vga_putchar */
 
-/* ------------------------------------------------------------------ */
 /* 常量：ext2 的字段偏移全部来自 Linux 的 struct ext2_super_block 等  */
-/* ------------------------------------------------------------------ */
 
 #define EXT2_SUPER_MAGIC      0xEF53u
 #define EXT2_SECTOR_SIZE      512u
@@ -55,9 +41,7 @@
 #define MODE_FMT_DIR          0x4000u
 #define MODE_FMT_REG          0x8000u
 
-/* ------------------------------------------------------------------ */
 /* 挂载后缓存的几何信息                                               */
-/* ------------------------------------------------------------------ */
 
 static int      g_mounted = 0;
 static uint32_t g_block_size = 0;
@@ -89,9 +73,7 @@ typedef struct {
     uint32_t block[15];
 } inode_t;
 
-/* ------------------------------------------------------------------ */
 /* 小端读取                                                           */
-/* ------------------------------------------------------------------ */
 
 static uint16_t rd16(const uint8_t *p)
 {
@@ -116,9 +98,7 @@ static void copy_bytes(void *dst, const void *src, uint32_t n)
     }
 }
 
-/* ------------------------------------------------------------------ */
 /* 块读取：一个 ext2 块 = block_size/512 个扇区                       */
-/* ------------------------------------------------------------------ */
 
 static int read_block_to(uint32_t blk, uint8_t *buf)
 {
@@ -140,13 +120,11 @@ static int read_block_to(uint32_t blk, uint8_t *buf)
     return EXT2_OK;
 }
 
-/* ------------------------------------------------------------------ */
 /* inode 读取                                                         */
-/* ------------------------------------------------------------------ */
 
-/* 读一个 inode：组号 = (ino-1)/inodes_per_group，组内序号 = (ino-1)%...，
- * inode 表里第 index 项，偏移 index*inode_size —— 这是 ext2 的定位公式，
- * 和 Linux ext2_iget() 里的 ext2_get_inode() 一模一样。 */
+/* 读一个 inode：组号 = (ino-1)/inodes_per_group，组内序号 = (ino-1)%...，在 inode 表里取
+ * 第 index 项，偏移 index*inode_size。这是 ext2 的定位公式，跟 Linux ext2_iget() 里那个
+ * ext2_get_inode() 一模一样。 */
 static int read_inode(uint32_t ino, inode_t *out)
 {
     uint32_t group, index, desc_off, desc_sector, desc_in_block;
@@ -224,9 +202,7 @@ static int read_inode(uint32_t ino, inode_t *out)
     return EXT2_OK;
 }
 
-/* ------------------------------------------------------------------ */
 /* 路径解析                                                           */
-/* ------------------------------------------------------------------ */
 
 #define PATH_MAX_COMPS 6u
 #define NAME_MAX_LEN   32u
@@ -275,7 +251,7 @@ static int split_path(const char *path, char comps[PATH_MAX_COMPS][NAME_MAX_LEN]
 }
 
 /* 在目录 inode 里按名字找一项（ext2 目录项：inode, rec_len, name_len, type,
- * name —— 每项长度是 rec_len，最后一项 rec_len 拉到块尾）。 */
+ * name ， 每项长度是 rec_len，最后一项 rec_len 拉到块尾）。 */
 static int dir_lookup(const inode_t *dir, const char *name, dentry_t *out)
 {
     uint32_t b;
@@ -365,9 +341,7 @@ static int resolve(const char *path, inode_t *out)
     return EXT2_OK;
 }
 
-/* ------------------------------------------------------------------ */
 /* 挂载                                                               */
-/* ------------------------------------------------------------------ */
 
 int ext2_mount(void)
 {
@@ -471,9 +445,7 @@ int ext2_geometry(ext2_geom_t *out)
     return EXT2_OK;
 }
 
-/* ------------------------------------------------------------------ */
 /* ext2ls                                                             */
-/* ------------------------------------------------------------------ */
 
 int ext2_list(const char *path)
 {
@@ -531,7 +503,7 @@ int ext2_list(const char *path)
             }
             name[name_len] = '\0';
 
-            /* 目录亮蓝带 '/'，文件浅灰 —— 与 fatls 的视觉语言一致 */
+            /* 目录亮蓝带 '/'，文件浅灰 ， 与 fatls 的视觉语言一致 */
             {
                 inode_t child;
                 const bool is_dir =
@@ -560,12 +532,10 @@ int ext2_list(const char *path)
     return EXT2_OK;
 }
 
-/* ------------------------------------------------------------------ */
 /* ext2cat：直接块 + 一级间接 + 二级间接                              */
-/* ------------------------------------------------------------------ */
 
 /* 从"指针块"里逐项读数据块。level=1 表示这些指针直接指向数据（一级间接），
- * level=2 表示它们指向下一层指针块（二级间接）—— 就是 ext2 的间接块树。 */
+ * level=2 表示它们指向下一层指针块（二级间接）， 就是 ext2 的间接块树。 */
 static uint32_t copy_from_pointer_block(uint32_t ptr_block, uint32_t level,
                                         uint8_t *buf, uint32_t cap,
                                         uint32_t written)
@@ -693,8 +663,7 @@ int ext2_size(const char *path, uint64_t *size)
     return EXT2_OK;
 }
 
-/* ==================================================================== */
-/* [ADD] M21：写路径 —— 位图分配、建文件、写数据、目录项插入          */
+/* [ADD] M21：写路径 ， 位图分配、建文件、写数据、目录项插入          */
 /*                                                                    */
 /* 对应 Linux 的四个函数：                                             */
 /*   ext2_new_block()  -> 块位图里找第一个 0 位，置 1                  */
@@ -704,7 +673,6 @@ int ext2_size(const char *path, uint64_t *size)
 /*   ext2_add_entry()  -> 在父目录里拆 rec_len，塞进一个新目录项       */
 /* 所有写都是 write-through：一块 = block_size/512 个扇区，逐扇区调    */
 /* ata_write_sector()，不做页缓存，所以没有 fsync 这一步。             */
-/* ==================================================================== */
 
 #define SB_FREE_BLOCKS   0x0Cu
 #define SB_FREE_INODES   0x10u
@@ -746,9 +714,7 @@ static uint32_t round_up4(uint32_t v)
     return (v + 3u) & ~3u;
 }
 
-/* ------------------------------------------------------------------ */
 /* 写一个块：read_block_to 的镜像版本                                 */
-/* ------------------------------------------------------------------ */
 
 int ext2_write_block(uint32_t blk, const uint8_t *buf)
 {
@@ -784,9 +750,7 @@ uint32_t ext2_inodes_per_group(void){ return g_inodes_per_group; }
 uint32_t ext2_first_data_block(void){ return g_first_data_block; }
 uint32_t ext2_inode_bytes(void)     { return g_inode_size; }
 
-/* ------------------------------------------------------------------ */
 /* 组描述符                                                           */
-/* ------------------------------------------------------------------ */
 
 static uint32_t group_count(void)
 {
@@ -822,9 +786,7 @@ static int gdt_write(uint32_t group, const uint8_t *in32)
     return ext2_write_block(blk, g_wbuf);
 }
 
-/* ------------------------------------------------------------------ */
 /* 超级块：空闲计数（s_free_blocks_count @0x0C / s_free_inodes @0x10） */
-/* ------------------------------------------------------------------ */
 
 static int sb_read(uint8_t *sb)
 {
@@ -877,9 +839,7 @@ uint32_t ext2_free_inodes(void)
     return rd32(sb + SB_FREE_INODES);
 }
 
-/* ------------------------------------------------------------------ */
 /* 位图分配                                                           */
-/* ------------------------------------------------------------------ */
 
 /* 在 limit 位范围内找第一个 0 位 */
 static int bitmap_first_zero(const uint8_t *bm, uint32_t from, uint32_t limit,
@@ -1005,9 +965,7 @@ static int alloc_inode(uint32_t goal_group, uint32_t *out_ino, int is_dir)
     return EXT2_ERR_NOSPC;
 }
 
-/* ------------------------------------------------------------------ */
 /* inode 的整块读-改-写                                               */
-/* ------------------------------------------------------------------ */
 
 static int inode_block_off(uint32_t ino, uint32_t *blk, uint32_t *off)
 {
@@ -1064,14 +1022,11 @@ int ext2_write_inode_raw(uint32_t ino, const uint8_t *raw)
     return ext2_write_block(blk, g_winode);
 }
 
-/* ------------------------------------------------------------------ */
 /* 目录项插入：拆 rec_len                                             */
-/* ------------------------------------------------------------------ */
 
-/* 在 dir 里加一项。type: 1=普通文件 2=目录。
- * 思路就是 Linux ext2_add_entry()：从块头扫，找一项"自己实际用的长度 + 新项长度
- * <= 它的 rec_len"的，把 rec_len 砍成自己实际用的长度，剩余空间正好放新项。
- * 目录连一个块都没有时（block[0]==0）先分配一个整块。 */
+/* 在 dir 里加一项，type 1 是普通文件、2 是目录。思路跟 Linux ext2_add_entry() 一样：从块头
+ * 扫，找一项满足"自己实际用的长度 + 新项长度 <= 它的 rec_len"的，把它的 rec_len 砍成实际
+ * 用的长度，剩下的正好放新项。目录连一个块都没有时（block[0]==0）先分配一整块。 */
 static int add_dir_entry(uint32_t dir_ino, inode_t *dir, const char *name,
                          uint32_t child_ino, uint8_t type, uint32_t *new_block)
 {
@@ -1160,9 +1115,7 @@ static int add_dir_entry(uint32_t dir_ino, inode_t *dir, const char *name,
     return EXT2_ERR_NOSPC;      /* 12 个直接块都塞满了 */
 }
 
-/* ------------------------------------------------------------------ */
 /* ext2_create：建一个普通文件                                         */
-/* ------------------------------------------------------------------ */
 
 int ext2_create(const char *path, const uint8_t *data, uint64_t len,
                 uint32_t *out_ino)
@@ -1306,8 +1259,7 @@ int ext2_create(const char *path, const uint8_t *data, uint64_t len,
     return EXT2_OK;
 }
 
-/* ==================================================================== */
-/* [ADD] M22：间接块写 —— 让内核能写出 > 12KB 的文件                   */
+/* [ADD] M22：间接块写 ， 让内核能写出 > 12KB 的文件                   */
 /*                                                                    */
 /* M19 的读路径已经会走 i_block[12]（一级间接），M21 的写路径只填了 12  */
 /* 个直接块。这里补上写的对称面：                                     */
@@ -1315,7 +1267,6 @@ int ext2_create(const char *path, const uint8_t *data, uint64_t len,
 /*   2) 指针块里 每个 u32 = 一个数据块号（bs=1024 时有 256 个槽）      */
 /*   3) 数据块还是逐块分配、逐块写                                    */
 /* 这正是 Linux ext2_get_block() 里 add_branch 的那一步。              */
-/* ==================================================================== */
 
 #define PTR_PER_BLOCK_DEF 256u   /* g_block_size/4，bs=1024 时的默认值 */
 
@@ -1509,8 +1460,7 @@ int ext2_create_big(const char *path, const uint8_t *data, uint64_t len,
     return EXT2_OK;
 }
 
-/* ==================================================================== */
-/* [ADD] M28：二级/三级间接块 —— 单文件冲破 268KB                        */
+/* [ADD] M28：二级/三级间接块 ， 单文件冲破 268KB                        */
 /*                                                                    */
 /* M22 只给 i_block[12] 建了一个指针块，所以单文件上限是：              */
 /*   bs * (12 + bs/4) = 1024 * 268 = 268KB                            */
@@ -1524,7 +1474,6 @@ int ext2_create_big(const char *path, const uint8_t *data, uint64_t len,
 /* 写盘顺序固定在"先指针、后数据"：指针块里的槽位先落盘，再把内容写进  */
 /* 数据块。中途掉电最多留下一个指向全零块的指针，fsck 只会报"块没用满"，*/
 /* 而不会报"指针指到没分配的块"。                                     */
-/* ==================================================================== */
 
 /* free_* 系列定义在下面 M23 一节，这里先声明，回滚要用 */
 static int free_block(uint32_t blk);
@@ -1554,10 +1503,9 @@ static int map_alloc_ptr_block(uint32_t *out_blk)
     return EXT2_OK;
 }
 
-/* 逻辑块 -> 物理块，路径上缺哪一层就把哪一层补出来。
- * raw 是 inode 的原始缓冲，函数会就地改 i_block[]（调用方最后统一写回 inode）。
- * out_ptrs 累加这次新分配了几个指针块；out_i1/2/3 只在"新分配"时写出编号，
- * 用来给命令打印"这次到底用到了哪几层"。 */
+/* 逻辑块 -> 物理块，路径上缺哪层就把哪层补出来。raw 是 inode 的原始缓冲，函数就地改
+ * i_block[]，调用方最后统一写回。out_ptrs 累加这次新分配了几个指针块；out_i1/2/3 只在
+ * "新分配"时写出编号，命令拿它打印这次到底用到了哪几层。 */
 static int ext2_map_add(uint8_t *raw, uint32_t lb, uint32_t *out_phys,
                         uint32_t *out_ptrs, uint32_t *out_i1,
                         uint32_t *out_i2, uint32_t *out_i3)
@@ -1725,9 +1673,8 @@ static int ext2_map_add(uint8_t *raw, uint32_t lb, uint32_t *out_phys,
     return EXT2_ERR_NOSPC;
 }
 
-/* [ADD] M28：写失败时把已经占下的东西还回去。
- * 大文件动辄上千块，写一半失败（盘满 / I/O 错）如果不回滚，盘上就留下一堆
- * 位图里标着"已用"、却没有任何 inode 引用的块 —— 正是 fsck 报
+/* [ADD] M28：写失败时把已经占下的东西还回去。大文件动辄上千块，写一半失败（盘满、I/O 错）
+ * 不回滚的话，盘上就留一堆位图里标着已用、却没有 inode 引用的块，正是 fsck 报
  * "Block bitmap differences" 的来源。 */
 static void map_rollback(uint8_t *raw, uint32_t ino)
 {
@@ -1904,7 +1851,7 @@ int ext2_create_stream(const char *path, uint64_t len, ext2_fill_fn gen, void *c
     return EXT2_OK;
 }
 
-/* ---------- 读路径的另一半：按偏移读（只查表，不分配） ---------- */
+/* 读路径的另一半：按偏移读（只查表，不分配） */
 
 /* 逻辑块 -> 物理块：纯只读地走一遍指针树，任何一层缺块都返回 0。
  * 和 ext2_map_add 的差别只有"不分配"，这正是 Linux ext2_bmap() 的语义。 */
@@ -2027,8 +1974,7 @@ int ext2_read_at(const char *path, uint64_t off, uint8_t *buf, uint64_t maxlen,
     return EXT2_OK;
 }
 
-/* ==================================================================== */
-/* [ADD] M23：释放 —— 把盘上的东西删掉                                 */
+/* [ADD] M23：释放 ， 把盘上的东西删掉                                 */
 /*                                                                    */
 /* M21/M22 只会让盘变胖。这里补另一半：                                */
 /*   free_block()  -> 位图清位 + 组描述符 -1 + 超级块 +1               */
@@ -2037,7 +1983,6 @@ int ext2_read_at(const char *path, uint64_t off, uint8_t *buf, uint64_t maxlen,
 /*                      再释放指针块本身（顺序反了就会漏块）            */
 /*   ext2_unlink()  -> 目录项 inode 置 0 + rec_len 并给前一项，        */
 /*                      i_links_count 减到 0 才真释放 inode             */
-/* ==================================================================== */
 
 static uint8_t g_freebuf[EXT2_INODE_TABLE_MAX];   /* 释放时读"指针块"专用 */
 static uint8_t g_freebm[EXT2_INODE_TABLE_MAX];    /* 释放时读"位图"专用（不能和 g_freebuf 共用） */
@@ -2128,10 +2073,9 @@ static int free_inode(uint32_t ino, int was_dir)
     return EXT2_OK;
 }
 
-/* [ADD] M28：递归释放时每一层都要有自己的缓冲。
- * M23 只有一个 g_freebuf，一级间接够用；二级间接树里内层递归会把外层的
- * 指针数组覆盖掉，外层再往下走拿到的就是垃圾块号，free_block 一查位图就
- * 报 I/O error（也正是 ext2rm 大文件时报错的原因）。最多三层，给三块。 */
+/* [ADD] M28：递归释放时每一层都要有自己的缓冲。M23 只有一个 g_freebuf，一级间接够用；
+ * 二级间接树里内层递归会把外层的指针数组覆盖掉，外层再往下走拿到的就是垃圾块号，
+ * free_block 一查位图就报 I/O error，ext2rm 大文件时报的就是这个错。最多三层，给三块。 */
 static uint8_t g_free_lv1[EXT2_INODE_TABLE_MAX];
 static uint8_t g_free_lv2[EXT2_INODE_TABLE_MAX];
 static uint8_t g_free_lv3[EXT2_INODE_TABLE_MAX];

@@ -1,19 +1,7 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    drivers/ata.c
- * Version: 1.0
- * Brief:   ATA PIO 驱动（LBA28 / 主通道 0x1F0），最简同步实现。
- *
- * B 组第 2 个功能（ATA PIO + 用户表持久化）的纯增量新增文件。
- * 设计要点：
- *   - 只支持主通道（0x1F0）主设备（master），足够一个教学内核挂一块磁盘。
- *   - 纯 PIO、忙等（polling），不挂中断；所有失败返回负错误码，绝不 panic。
- *   - 每个端口操作前做 ~400ns 延时：读一次 0x3F6（备用状态）约 1us，读 4 次
- *     足以满足 ATA 规范对写命令后/读数据前的插空要求。
- *   - 从 ISO/CD 启动时，主通道往往没有真正的硬盘（CD 是 secondary 的 ATAPI），
- *     因此 ata_init 检测不到磁盘，ata_read/write 直接返回 ATA_ENODEV，
- *     上层据此走"内存态默认账户"分支。
- * ============================================================================ */
+/* ata.c - ATA PIO（LBA28，主通道 0x1F0），纯轮询不做中断，只认主设备。
+ * 每个端口操作前插一段 ~400ns 延时（连读 0x3F6 四次），够 ATA 规范对写命令后
+ * 和读数据前的插空要求。从 CD 启动时主通道往往没有硬盘，ata_init 找不到盘，
+ * ata_read/write 直接给 ATA_ENODEV，上层据此退回内存态账户表。 */
 
 #include "ata.h"
 #include "ahci.h"   /* [ADD] M31：AHCI 后端 */
@@ -248,17 +236,12 @@ int ata_write_sector(uint32_t lba, const uint8_t *buf)
     return ATA_EROFS;
 }
 
-/* ============================================================================
- * [ADD] B 组第 3 个功能：主通道「从设备」（slave）读扇区。
- *
- * 只追加，不改动上面的 ata_init / ata_read_sector / ata_write_sector 任何一行。
- * QEMU 里 -drive file=data.img,if=ide,index=1 把第二块盘放在主通道从设备，
- * 因此这里把驱动器选择字节从 0xE0（master）换成 0xF0（slave），其余时序完全
- * 复用上面已有的 static 辅助函数（ata_outb / ata_inb / ata_inw / ata_wait_*）。
- *
- * 从设备不存在时：选中后读状态寄存器若为 0x00（浮空/无设备）或 0xFF（总线浮高），
- * 直接返回 ATA_ENODEV，避免在不存在设备上做 1e6 次忙等。
- * ============================================================================ */
+/* [ADD] B 组第 3 个功能：主通道从设备（slave）读扇区。只追加，上面的 ata_init /
+ * ata_read_sector / ata_write_sector 一行没动。QEMU 里 -drive file=data.img,if=ide,index=1
+ * 把第二块盘放在主通道从设备，所以这里把驱动器选择字节从 0xE0（master）换成 0xF0（slave），
+ * 其余时序完全复用已有的 static 辅助函数（ata_outb / ata_inb / ata_inw / ata_wait_*）。
+ * 从设备不存在时，选中后读状态寄存器要是 0x00（浮空、无设备）或 0xFF（总线浮高），
+ * 直接返回 ATA_ENODEV，免得在不存在设备上忙等 1e6 次。 */
 
 /* 选中主通道从设备并做存在性判断：存在返回 ATA_OK，不存在返回 ATA_ENODEV。 */
 static int ata_select_slave(uint32_t lba)

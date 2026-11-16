@@ -1,17 +1,7 @@
-/* ============================================================================
- * zh_OS 0.2beta (x86_64)
- * File:    user/cat.c
- * Version: 0.2beta
- * Brief:   M14：真正跑在 ring 3 的 cat（/bin/cat.elf）。
- *
- * 以前 cat 是内核里的 cmd_cat()：ramfs_read_file() 一次把整份文件读出来。
- * 这个程序走的是 Linux 的老三样 —— open / read / close（M9 的 11/12/13）：
- *
- *     fd = open(path);   while ((n = read(fd, buf, 256)) > 0) write(1, buf, n);   close(fd);
- *
- * 意义在于：它证明了 M9 的 fd 表不是摆设 —— 一个用户态程序可以按偏移一段一段
- * 读一个大文件，而不是让内核把整份内容塞给它。
- * ============================================================================ */
+/* cat.c - M14 里真正跑在 ring3 的 cat（/bin/cat.elf）。
+ * 以前 cat 是内核的 cmd_cat()，ramfs_read_file() 一次把整份文件读出来。这里走 Linux 那老三样：
+ * fd = open(path); while ((n = read(fd, buf, 256)) > 0) write(1, buf, n); close(fd);
+ * 意义在于用户态程序能按偏移一段一段读大文件，而不是等内核把整份内容塞过来。 */
 
 typedef unsigned long u64;
 typedef unsigned int u32;

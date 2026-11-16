@@ -1,9 +1,4 @@
-/* ============================================================================
- * zh_OS 0.2beta (x86_64)
- * File:    users/users.c
- * Version: 0.2beta
- * Brief:   内存态账户表、FNV-1a 64 哈希、认证与权限（含 ATA 持久化 TODO）。
- * ============================================================================ */
+/* users.c - 内存态账户表、FNV-1a 64 哈希、认证与权限 */
 
 #include "users.h"
 
@@ -12,43 +7,30 @@
 /*
  * 账户表的内存态实现（第 4 步）。
  *
- * ===========================================================================
- * TODO（本版未实现）：ATA PIO 磁盘持久化 —— 可选任务 5
- * ===========================================================================
- * 目标：让 useradd / passwd 的结果在重启后仍然保留。
- *
- * 1) drivers/ata.c（尚未创建），LBA28 / 主通道 0x1F0 / PIO 模式：
+ * TODO（本版未实现，可选任务 5）：ATA PIO 磁盘持久化，目标是让 useradd / passwd 的结果重启
+ * 之后还在。drivers/ata.c 走 LBA28、主通道 0x1F0、PIO 模式：
  *      void ata_init(void);
- *      int  ata_read_sector (uint32_t lba, uint8_t *buf);   (512 字节)
+ *      int  ata_read_sector (uint32_t lba, uint8_t *buf);     (512 字节)
  *      int  ata_write_sector(uint32_t lba, const uint8_t *buf);
- *    端口：0x1F0 数据、0x1F2 扇区数、0x1F3/1F4/1F5 LBA 低/中/高、
- *          0x1F6 驱动器 + LBA 高 4 位、0x1F7 状态/命令（0x20 读、0x30 写）。
- *
- * 2) 固定扇区：预留 LBA 1（避开 LBA 0，留给将来的分区/引导记录），
- *    单扇区 512 字节足够容纳 ZH_USER_MAX(16) 条账户记录。
- *    序列化格式（每条一行，ASCII）：
+ * 端口 0x1F0 数据、0x1F2 扇区数、0x1F3/1F4/1F5 是 LBA 低/中/高、0x1F6 驱动器加 LBA 高 4 位、
+ * 0x1F7 状态和命令（0x20 读、0x30 写）。
+ * 扇区固定用 LBA 1（避开 LBA 0，留给将来的分区表或引导记录），一个扇区 512 字节足够容纳
+ * ZH_USER_MAX(16) 条账户记录。序列化格式每条一行 ASCII：
  *      name:uid:gid:home:shell:pass_hash_hex:is_admin\n
- *    末尾以空行作结束标记；读入时逐行解析并做字段长度校验，
- *    任何格式错误都整体回退到内置账户表，绝不让内核拿到半张表。
- *
- * 3) 计划公开接口（写进 users.h）：
- *      int users_save(void);   (序列化 user_table 后写 LBA 1)
- *      int users_load(void);   (读 LBA 1 后重建 user_table)
- *    user_init() 先尝试 users_load()，失败再走现在的 user_insert() 内置账户；
- *    user_add() / user_set_password() 成功后调用 users_save() 落盘。
- *    user_init() 与 user_insert() 已经把「载入」与「建表」分成两层，
- *    届时只替换数据来源即可，不必改动认证与权限逻辑。
- *
- * 4) 重要限制：从 ISO/CD 启动时介质只读，ata_write_sector() 没有可写目标
- *    （或写失败），持久化不会生效。必须给虚拟机额外挂一块可写磁盘，例如：
- *      qemu-system-x86_64 -cdrom zh_OS-0.2beta.iso
+ * 末尾用空行当结束标记。读入时逐行解析并校验字段长度，任何格式错误都整体回退到内置账户表，
+ * 绝不让内核拿到半张表。
+ * 接口按计划写进 users.h：int users_save(void) 把 user_table 序列化后写 LBA 1，
+ * int users_load(void) 读 LBA 1 重建 user_table。user_init() 先试 users_load()，失败再走现在
+ * 的 user_insert() 内置账户；user_add() / user_set_password() 成功后调 users_save() 落盘。
+ * user_init() 和 user_insert() 已经把载入和建表分成两层，到时候只换数据来源，认证和权限逻辑
+ * 不用动。
+ * 限制：从 ISO/CD 启动时介质只读，ata_write_sector() 没有可写目标或者直接写失败，持久化不会
+ * 生效。得给虚拟机额外挂一块可写磁盘，比如
+ *      qemu-system-x86_64 -cdrom zh_OS-1.0.iso
  *                         -drive file=disk.img,format=raw -m 128
- *    只有挂载可写磁盘时持久化才有意义。
- *
- * 5) 本版不实现：遵守「不新增无关依赖、不改已验收交互行为」的交付约束，
- *    且 ISO 启动场景下无法验证写盘。当前全部为内存态：
- *    新增账户、用 passwd 改过的密码重启后都会丢失，密码复位为 "zh"。
- * ===========================================================================
+ * 挂了可写磁盘这件事才有意义。
+ * 本版不做的理由是交付约束里那两条：不新增无关依赖、不改已验收的交互行为，而且 ISO 启动场景
+ * 下没法验证写盘。现在全是内存态，新加的账户、passwd 改过的密码重启都会丢，密码复位成 "zh"。
  */
 
 #define FNV_OFFSET_BASIS 0xcbf29ce484222325ULL
@@ -63,9 +45,7 @@ static zh_user_t user_table[ZH_USER_MAX];
 static uint32_t user_table_count;
 static int users_initialized;
 
-/* ------------------------------------------------------------------ */
 /* 本地字符串工具（freestanding 无 libc；第 5 步可抽成独立模块复用）    */
-/* ------------------------------------------------------------------ */
 
 static uint32_t str_length(const char *s)
 {
@@ -140,13 +120,11 @@ static uint64_t fnv1a64(const char *s)
     return hash;
 }
 
-/* ------------------------------------------------------------------ */
 /* 账户表                                                             */
-/* ------------------------------------------------------------------ */
 
 /*
- * 内部插入函数：不做权限检查，供 user_init() 载入内置账户使用。
- * 公开的 user_add() 在它的外面加一层 root 权限校验。
+ * 内部插入函数，不做权限检查，给 user_init() 载入内置账户用。公开的 user_add() 在它外面加
+ * 一层 root 权限校验。
  */
 static int user_insert(const char *name, uint32_t uid, uint32_t gid,
                        const char *home, const char *shell,
@@ -290,9 +268,7 @@ int user_set_password(const char *name, const char *password)
     return USER_OK;
 }
 
-/* ------------------------------------------------------------------ */
 /* [ADD] 持久化桥接：供 users_persist.c 读写内存账户表（不动上面任何逻辑）。 */
-/* ------------------------------------------------------------------ */
 
 /* 取第 i 个账户（i >= 当前数量返回 NULL），供 users_save() 序列化。 */
 zh_user_t *user_table_entry(uint32_t i)
@@ -304,9 +280,8 @@ zh_user_t *user_table_entry(uint32_t i)
 }
 
 /*
- * 用外部（磁盘载入）的账户数组整体替换内存账户表。
- * 清空计数与当前会话，逐条拷贝（含预计算的 pass_hash，不再重算哈希）。
- * 校验失败由调用方决定回退，本函数只在参数合法时执行覆盖。
+ * 用外部（磁盘载入）的账户数组整体替换内存账户表。清空计数和当前会话，逐条拷贝，包括预计算
+ * 好的 pass_hash，不再重算哈希。校验失败要不要回退由调用方决定，本函数只在参数合法时覆盖。
  */
 int user_table_reset_and_load(const zh_user_t *src, uint32_t count)
 {

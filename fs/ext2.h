@@ -1,24 +1,9 @@
-/* ============================================================================
- * zh_OS 0.2beta (x86_64)
- * File:    fs/ext2.h
- * Version: 0.2beta
- * Brief:   ext2 只读挂载接口（读 ATA 主通道「主设备」，QEMU if=ide,index=0）。
- *
- * M19 的纯增量新增文件：复用 drivers/ata 的 ata_read_sector（B2 的 PIO 接口，
- * 一行未改），把 Linux 的第二代磁盘文件系统 ext2 的**元数据解析**搬进内核：
- *   超级块 -> 块组描述符 -> inode 表 -> inode -> 目录项 -> 数据块。
- * 这只读不写，也故意不碰 ramfs / FAT16：ext2ls / ext2cat 是独立命令。
- *
- * ================================ 磁盘布局 =================================
- *   块大小 bs = 1024 << s_log_block_size（1024 / 2048 / 4096）
- *   LBA 0        引导块（ext2 不用它，留 1024 字节）
- *   offset 1024  超级块 struct ext2_super_block（占 1024 字节）
- *   块 2 起      块组描述符表（每项 32 字节：bg_block_bitmap / bg_inode_bitmap /
- *                bg_inode_table / ...）——注意 bs=1024 时块 2 就在 LBA 4
- *   每个块组     inode 表（bg_inode_table 指向的块，每项 s_inode_size 字节）
- *   目录          内容是一串目录项：inode(4) rec_len(2) name_len(1) type(1) name
- *   文件          数据块；i_block[0..11] 直接块、[12] 一级间接、[13] 二级间接
- * ============================================================================ */
+/* ext2.h - M19 ext2 只读挂载的接口与盘上结构定义。
+ * 块大小 bs = 1024 << s_log_block_size，取 1024 / 2048 / 4096。
+ * 布局：LBA 0 引导块（ext2 不用）| offset 1024 超级块 | 块 2 起块组描述符表（每项 32 字节，
+ * 含 bg_block_bitmap / bg_inode_bitmap / bg_inode_table，bs=1024 时块 2 落在 LBA 4）|
+ * 每块组一张 inode 表（项长 s_inode_size）| 目录是一串 inode(4) rec_len(2) name_len(1) type(1) name |
+ * 文件数据在数据块里，i_block[0..11] 直接块、[12] 一级间接、[13] 二级间接。 */
 
 #ifndef ZH_OS_FS_EXT2_H
 #define ZH_OS_FS_EXT2_H
@@ -64,7 +49,7 @@ typedef struct {
     uint32_t inodes_per_group;
     uint32_t inode_size;
     uint32_t first_ino;
-    uint32_t gdt_block;      /* 块组描述符表起始**块号** */
+    uint32_t gdt_block;      /* 块组描述符表起始块号 */
     uint32_t inode_table;    /* 第 0 组 inode 表起始块号 */
     uint16_t magic;
     uint16_t rev_level;
@@ -72,17 +57,13 @@ typedef struct {
 
 int ext2_geometry(ext2_geom_t *out);
 
-/* ------------------------------------------------------------------ */
 /* Shell 命令（在 commands.c 末尾追加注册，与 ramfs/FAT16 隔离） */
-/* ------------------------------------------------------------------ */
 int cmd_ext2mount(int argc, char **argv);
 int cmd_ext2info(int argc, char **argv);
 int cmd_ext2ls(int argc, char **argv);
 int cmd_ext2cat(int argc, char **argv);
 
-/* ------------------------------------------------------------------ */
 /* [ADD] M21：写路径                                                   */
-/* ------------------------------------------------------------------ */
 
 /* 几何查询（写路径与 shell 层用；返回挂载时缓存的值） */
 uint32_t ext2_block_size(void);
@@ -122,12 +103,12 @@ int ext2_create_big(const char *path, const uint8_t *data, uint64_t len,
 /* [ADD] M22 的命令 */
 int cmd_ext2fill(int argc, char **argv);
 
-/* [ADD] M28：二级/三级间接块 —— 单文件上限从 268KB 变成 ~16GB */
+/* [ADD] M28：二级/三级间接块 ， 单文件上限从 268KB 变成 ~16GB */
 typedef void (*ext2_fill_fn)(uint64_t off, uint8_t *buf, uint32_t n, void *ctx);
 
-/* 流式建大文件：每写一个数据块就回调一次 gen(off, buf, n, ctx) 填内容，
- * 不要求调用方先把整份数据放进内存。out_ptrs 是这次新分配了几个指针块，
- * out_i1/i2/i3 是三级指针树里各自首次用到的那块（没用到就是 0）。 */
+/* 流式建大文件：每写一个数据块回调一次 gen(off, buf, n, ctx) 填内容，不要求调用方先把整份
+ * 数据放进内存。out_ptrs 是这次新分配了几个指针块，out_i1/i2/i3 是三级指针树里各自首次用
+ * 到的那块，没用到就是 0。 */
 int ext2_create_stream(const char *path, uint64_t len, ext2_fill_fn gen, void *ctx,
                        uint32_t *out_ino, uint32_t *out_blocks,
                        uint32_t *out_ptrs, uint32_t *out_i1,

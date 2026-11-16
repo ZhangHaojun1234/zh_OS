@@ -1,9 +1,4 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    kernel/syscall.h
- * Version: 1.0
- * Brief:   M2 系统调用：int 0x80 门、调用号与分发器接口。
- * ============================================================================ */
+/* syscall.h - 调用号与分发器接口 */
 
 #ifndef ZH_OS_SYSCALL_H
 #define ZH_OS_SYSCALL_H
@@ -13,17 +8,11 @@
 struct regs;   /* 中断帧，定义在 kernel/isr.h */
 
 /*
- * 系统调用 ABI（刻意贴近 Linux 的 i386 老 ABI，接 POSIX 时最省事）：
- *
- *   rax = 调用号
- *   rdi = 参数 1，rsi = 参数 2，rdx = 参数 3
- *   返回值写回 rax
- *
- * 从 ring3 用 `int 0x80` 触发。为什么是 int 而不是 syscall/sysret 指令：
- *   syscall 指令需要把 IA32_STAR / IA32_LSTAR / IA32_FMASK 三个 MSR 配好，
- *   而且 sysret 有一个著名的坑（回到非规范地址时会 #GP）。int 0x80 只要
- *   一个 IDT 门，出事也只会是 #GP/#PF，调试成本低得多。
- *   M2 用 int 0x80 拿到"能用的系统调用"，M4 之后再考虑换 syscall 指令提速。
+ * 系统调用 ABI，刻意贴着 Linux 的 i386 老 ABI，将来接 POSIX 最省事：rax 是调用号，rdi/rsi/rdx
+ * 是参数 1/2/3，返回值写回 rax。从 ring3 用 int 0x80 触发。
+ * 不用 syscall/sysret 是因为那条路要把 IA32_STAR、IA32_LSTAR、IA32_FMASK 三个 MSR 都配好，
+ * sysret 还有个老坑，回到非规范地址就 #GP。int 0x80 只要一个 IDT 门，出事顶多是 #GP 或 #PF，
+ * 好查得多。M2 先用 int 0x80 把系统调用跑通，M4 之后再考虑换指令提速。
  */
 
 #define ZH_SYS_WRITE 1u   /* (const char *buf, u64 len) -> 打印的字节数，越界返回 -1 */
@@ -49,7 +38,7 @@ struct regs;   /* 中断帧，定义在 kernel/isr.h */
 
 /*
  * [ADD] M13：shell 降到 ring3 之后，它需要的就不再是"内核里的函数"了，
- * 而是这三个调用 —— 键盘、目录、当前路径。
+ * 而是这三个调用 ， 键盘、目录、当前路径。
  */
 #define ZH_SYS_READKEY 17u /* [M13] () -> 下一个字符（0x00..0xFF）；缓冲区空返回 0 */
 #define ZH_SYS_CHDIR  18u  /* [M13] (const char *path) -> 0 成功，-1 = 不是目录/不存在 */
@@ -59,10 +48,8 @@ struct regs;   /* 中断帧，定义在 kernel/isr.h */
 #define ZH_SYS_READDIR 20u
 
 /*
- * [ADD] M17：信号与 waitpid
- *   kill(pid, sig) —— 投递一个信号（Linux sys_kill）
- *   waitpid(pid)   —— 等指定子进程（Linux sys_wait4 的 pid 参数版本）
- * 仍然是 rdi/rsi/rdx 三个参数位，跟前面完全一致。
+ * [ADD] M17：信号和 waitpid。kill(pid, sig) 投一个信号，对应 Linux sys_kill；waitpid(pid)
+ * 等指定子进程，相当于 sys_wait4 只取 pid 那一个参数。还是 rdi/rsi/rdx 三个参数位。
  */
 #define ZH_SYS_WAITPID 21u /* [M17] (int pid, uint32 flags) -> 退出码 / 0x10000|sig / 0 / -1 */
 #define ZH_SYS_KILL    22u /* [M17] (int pid, int sig) -> 0 成功，-1 = pid 不存在 */
@@ -70,11 +57,11 @@ struct regs;   /* 中断帧，定义在 kernel/isr.h */
 
 /*
  * [ADD] M18：信号捕获
- *   signal(sig, handler) —— 装 handler（Linux sys_signal / sigaction 的核心字段）
- *   sigreturn()          —— 从 handler 回来时把整帧还原（Linux __NR_rt_sigreturn）
- *   getstate(pid)        —— 查任务状态（Linux 用 /proc/<pid>/stat，本版直接问内核）
+ *   signal(sig, handler) ， 装 handler（Linux sys_signal / sigaction 的核心字段）
+ *   sigreturn()          ， 从 handler 回来时把整帧还原（Linux __NR_rt_sigreturn）
+ *   getstate(pid)        ， 查任务状态（Linux 用 /proc/<pid>/stat，本版直接问内核）
  *
- * 注意 SYS_SIGRETURN 的号 **写进了用户态蹦床页的机器码里**（`mov eax,24; int 0x80`），
+ * 注意 SYS_SIGRETURN 的号 写进了用户态蹦床页的机器码里（`mov eax,24; int 0x80`），
  * 改号就必须同时改 kernel/task.c 的 task_install_trampoline()。
  */
 #define ZH_SYS_SIGNAL    24u /* [M18] (int sig, uint64 handler) -> 旧的 handler；-1 失败 */

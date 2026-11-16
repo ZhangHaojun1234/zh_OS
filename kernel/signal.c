@@ -1,20 +1,4 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    kernel/signal.c
- * Version: 1.0
- * Brief:   M17 信号：pending 位图、默认动作、在"内核 -> 用户"边界上送达。
- *
- * 为什么单独一个文件
- * ------------------
- * Linux 里信号不属于调度器，也不属于系统调用：它是一套**异步通知**。
- *   - signal.c 只管"记下来"（send_sig / sigaddset）；
- *   - 真正送的那一刻在 arch/x86/entry/common.c 的 exit_to_user_mode_loop()：
- *     出门回用户态之前查一次 _TIF_SIGPENDING，有就 get_signal()，
- *     要么调 handler，要么按默认动作杀掉自己。
- *
- * 本文件就是这个拆分的最小版：task_signal() 只置位，
- * task_check_signals() 在 iretq 之前那一下才动手。
- * ============================================================================ */
+/* signal.c - 信号的 pending 位图、默认动作，送达点只放在回用户态那一帧 */
 
 #include "task.h"
 
@@ -52,9 +36,8 @@ const char *task_signal_name(uint32_t sig)
 }
 
 /*
- * 投递：只置 pending 位。
- * 注意这里**不**碰对方的中断帧 —— 对方可能正躺在它的内核栈上跑内核代码，
- * 也可能在 ring3。改帧是送达那一步的事，而且是"它自己"改自己的帧。
+ * 投递：只置 pending 位。这里不碰对方的中断帧，对方可能正躺在自己内核栈上跑内核代码，
+ * 也可能在 ring3。改帧是送达那一步的事，而且是它自己改自己的帧。
  */
 int task_signal(uint32_t pid, uint32_t sig)
 {
@@ -75,11 +58,10 @@ int task_signal(uint32_t pid, uint32_t sig)
     ++g_sig_sent;
 
     /*
-     * [ADD] M18 的关键一步（Linux 的 signal_wake_up_state）：
-     * SIGCONT 不能靠"pending 位等它自己回 ring3 时查"——因为它被停住了，
-     * 根本不会再跑到任何检查点。所以对 TASK_STOP 的进程必须**直接**放回就绪队列。
-     * 踩坑记录：第一版只置位，结果 `fg 1` 打印完 "SIGCONT" 之后进程一动不动，
-     * jobs 里还是 Stopped（屏幕上的 tick 一个都不往下走）。
+     * [ADD] M18 的关键一步，对应 Linux 的 signal_wake_up_state：SIGCONT 不能指望"pending
+     * 位等它自己回 ring3 时查"，因为它被停住了，根本跑不到任何检查点。所以对 TASK_STOP
+     * 的进程必须直接放回就绪队列。第一版只置位，结果 fg 1 打印完 SIGCONT 之后进程一动不动，
+     * jobs 里还是 Stopped，屏幕上的 tick 一个都不往下走。
      */
     if (sig == ZH_SIGCONT && (t->state == TASK_STOP ||
                               t->state == TASK_WAIT)) {
@@ -136,13 +118,11 @@ uint32_t task_foreground_pid(void)
 }
 
 /*
- * [ADD] M18：把一帧改成"去执行用户 handler"。
- *
- * 内核要做的事，和 Linux 的 setup_rt_frame() 一模一样：
- *   1) 把当前整帧（22 个 qword）存进 TCB 的 sig_frame —— handler 返回后要原样还回去；
- *   2) 在**用户栈**上压一个返回地址，值是蹦床页地址（那段 7 字节的 int 0x80）；
- *   3) 把 rip 改成用户 handler，rdi 给信号号（handler(sig)），rax 清 0。
- * handler 最后一条 `ret` 弹出第 2 步压的地址 → 跳进蹦床 → SYS_SIGRETURN → 整帧复原。
+ * [ADD] M18：把一帧改成"去执行用户 handler"，跟 Linux setup_rt_frame() 做的一样：
+ * 1) 当前整帧（22 个 qword）存进 TCB 的 sig_frame，handler 返回后要原样还回去；
+ * 2) 在用户栈上压一个返回地址，值是蹦床页地址，也就是那段 7 字节的 int 0x80；
+ * 3) rip 改成用户 handler，rdi 给信号号（handler(sig)），rax 清 0。
+ * handler 最后一条 ret 弹出第 2 步压的地址，跳进蹦床，SYS_SIGRETURN，整帧复原。
  */
 static void deliver_to_handler(task_t *cur, struct regs *r, uint32_t sig)
 {
@@ -176,13 +156,10 @@ static void deliver_to_handler(task_t *cur, struct regs *r, uint32_t sig)
 }
 
 /*
- * 边界检查：Linux 的 exit_to_user_mode_loop()。
- *
- * [ADD] M18 的改动只有三处，顺序就是 Linux 的 get_signal() 里的顺序：
- *   - 有用户 handler（且不是 SIGKILL）→ 改帧，让它去跑 handler；
- *   - SIGSTOP / SIGTSTP：默认动作 = 停住（作业控制）；
- *   - SIGCONT：默认动作 = 继续（对正在跑的进程是无副作用）。
- * 其余仍然走 M17：SIGINT / SIGTERM / SIGKILL 自杀，退出码 128+sig。
+ * 边界检查，位置等于 Linux 的 exit_to_user_mode_loop()。M18 加的三处，顺序跟 get_signal()
+ * 里一样：有用户 handler（且不是 SIGKILL）就改帧，让它去跑 handler；SIGSTOP / SIGTSTP 默认
+ * 动作是停住，作业控制要用；SIGCONT 默认动作是继续，对正在跑的进程无副作用。
+ * 其余仍走 M17：SIGINT / SIGTERM / SIGKILL 自杀，退出码 128 + sig。
  */
 void task_check_signals(struct regs *r)
 {
@@ -208,14 +185,12 @@ void task_check_signals(struct regs *r)
         return;
     }
     /*
-     * [ADD] M18 踩过的坑：**只在"回用户态"的那一帧上动手**。
-     *
-     * 键盘 IRQ 完全可能在进程"陷在内核里"的时候到来（比如 SYS_SLEEP 里的 hlt 循环）。
-     * 此时 `r` 是内核里那层的中断帧（cs=0x08、rsp 是内核栈），照它去改 rip/rsp，
-     * iretq 就会拿内核的 cs 去跳用户地址 —— #GP，整机 halt（本版真踩过）。
-     * Linux 的做法是等最外层 exit_to_user_mode 时才 get_signal()，这里用
-     * "(r->cs & 3) == 3" 表达同一件事：pending 位留着，等 syscall/IRQ 一路
-     * 退回到用户态边界时再送。
+     * [ADD] M18 踩过的坑：只在"回用户态"的那一帧上动手。
+     * 键盘 IRQ 完全可能在进程陷在内核里的时候到来，比如 SYS_SLEEP 里的 hlt 循环。这时 r 是
+     * 内核里那层的中断帧（cs=0x08、rsp 是内核栈），照它去改 rip/rsp，iretq 就会拿内核的 cs
+     * 去跳用户地址，结果 #GP、整机 halt，本版真踩过。
+     * Linux 是等最外层 exit_to_user_mode 时才 get_signal()，这里用 (r->cs & 3) == 3 表达
+     * 同一件事：pending 位留着，等 syscall 或 IRQ 一路退到用户态边界时再送。
      */
     if ((r->cs & 3u) != 3u) {
         return;

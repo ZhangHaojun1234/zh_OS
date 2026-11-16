@@ -1,9 +1,4 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    kernel/klog.c
- * Version: 1.0
- * Brief:   128 条内核日志环、极简格式化输出、dmesg 命令实现。
- * ============================================================================ */
+/* klog.c - 128 条日志环、极简格式化、dmesg 命令 */
 
 #include "klog.h"
 
@@ -12,25 +7,18 @@
 #include "../shell/shell.h"
 
 /*
- * 设计说明
- * --------
- * 环形缓冲：klog_ring_buf[KLOG_SIZE]，head 指向下一条写入位置，count 为当前条数。
- * 写满后 head 回绕并覆盖最旧条目；dump 从 (head - count + KLOG_SIZE) 开始，
- * 按最旧 -> 最新的顺序打印。
+ * 环形缓冲 klog_ring_buf[KLOG_SIZE]，head 指向下一条要写的位置，count 是当前条数。写满后
+ * head 回绕、覆盖最旧的一条；dump 从 (head - count + KLOG_SIZE) 开始，按最旧到最新的顺序打。
  *
- * 初始化顺序：kernel_main 里 heap_init() 先于 klog_init() 调用，
- * 而 heap_init() 末尾会写第一条日志。因此 klog_init() 故意不重置 head/count
- * （.bss 已经把它们清零），只写一条就绪日志，避免把先写入的日志抹掉。
- * 同理，klog() 在 klog_init() 之前调用也是安全的。
+ * 初始化顺序得留意：kernel_main 里 heap_init() 在 klog_init() 之前跑，而 heap_init() 末尾要写
+ * 第一条日志。所以 klog_init() 故意不重置 head/count（.bss 已经清零了），只写一条就绪日志，
+ * 免得把先写进去的日志抹掉。同理，klog() 在 klog_init() 之前调用也是安全的。
  *
- * 时间戳：pit_get_ticks()。PIT 初始化之前的日志 tick 为 0，符合实际。
- *
- * 格式化：使用 GCC 内建的 __builtin_va_*，不链接 libc、不依赖 stdarg.h。
- * 支持 %s %d %u %x %c %%，未知转换按字面 '%' + 字符输出；
- * 单条超过 160 字节自动截断，保证 '\0' 结尾。
- *
- * 颜色：按本次任务要求，dump 的 tick 与 dmesg 标题用亮青，内容用浅灰
- * （这是全项目红/黄/绿三色配色之外的显式例外）。
+ * 时间戳用 pit_get_ticks()，PIT 初始化之前的日志 tick 是 0，符合实际。
+ * 格式走 GCC 内建的 __builtin_va_*，不链 libc、不依赖 stdarg.h。支持 %s %d %u %x %c %%，
+ * 不认识的转换按字面 '%' 加字符输出；单条超过 160 字节自动截断，保证 '\0' 结尾。
+ * 颜色按任务要求，dump 的 tick 和 dmesg 标题用亮青、内容用浅灰，这是全项目红黄绿三色之外的
+ * 显式例外。
  */
 
 typedef struct {
@@ -42,9 +30,7 @@ static klog_entry_t klog_ring_buf[KLOG_SIZE];
 static uint32_t klog_head;
 static uint32_t klog_count;
 
-/* ------------------------------------------------------------------ */
 /* 字符串与数字工具（freestanding 无 libc）                           */
-/* ------------------------------------------------------------------ */
 
 static void put_char(char *buf, uint32_t *n, char c)
 {
@@ -102,9 +88,7 @@ static uint32_t tick_to_str(uint64_t value, char *buf)
     return n;
 }
 
-/* ------------------------------------------------------------------ */
 /* 环形缓冲                                                           */
-/* ------------------------------------------------------------------ */
 
 static void klog_store(const char *line)
 {
@@ -205,9 +189,7 @@ void klog_init(void)
     klog("kernel log ring ready, %u slots", (unsigned int)KLOG_SIZE);
 }
 
-/* ------------------------------------------------------------------ */
 /* 输出                                                               */
-/* ------------------------------------------------------------------ */
 
 void klog_dump(void)
 {
@@ -230,9 +212,7 @@ void klog_dump(void)
     }
 }
 
-/* ------------------------------------------------------------------ */
 /* dmesg 命令                                                         */
-/* ------------------------------------------------------------------ */
 
 int cmd_dmesg(int argc, char **argv)
 {

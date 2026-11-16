@@ -1,9 +1,4 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    kernel/task.h
- * Version: 1.0
- * Brief:   M4 进程与调度：TCB、每任务内核栈、时钟抢占、环形轮转调度。
- * ============================================================================ */
+/* task.h - TCB 与每任务内核栈、抢占和轮转调度的对外声明 */
 
 #ifndef ZH_OS_TASK_H
 #define ZH_OS_TASK_H
@@ -17,28 +12,22 @@
 struct regs;   /* 中断帧，定义在 kernel/isr.h */
 
 /*
- * M4 要解决什么问题
- * ------------------
- * M1/M2 的用户态是"一次性"的：进 ring3 跑一段，靠 sys_exit 或 #PF 回到内核，
- * 全程只有一个执行流，也没有"谁在跑"的概念。Linux 的多任务由四块拼成：
+ * M4 要解决的问题。M1/M2 的用户态是一次性的：进 ring3 跑一段，靠 sys_exit 或 #PF
+ * 回内核，全程只有一个执行流，也没有"谁在跑"这回事。多任务在 Linux 那边由四块拼成：
+ *   1) 每个任务有自己的内核栈，用户态一旦陷进来，CPU 按 TSS.RSP0 换栈。这就是
+ *      kstack_top 的用处，换任务时写进 TSS.RSP0。
+ *   2) 每个任务有自己的完整现场。现场不是几个寄存器，而是中断帧（struct regs：
+ *      15 个通用寄存器加 vector/error 加 rip/cs/rflags/rsp/ss）。记住这帧在哪块栈上，
+ *      恢复时 rsp 指回去、弹寄存器、iretq，就完事。
+ *   3) 有一个抢占点，就是时钟中断（IRQ0）。每次进来把当前帧地址记进 TCB，配额用完换人。
+ *   4) 有一个就绪队列，本版就是定长 TCB 数组加从当前位置往后找 READY，等价于 Linux 里
+ *      最简单的 O(n) 轮转，没有优先级也没有 CFS。
  *
- *   1) 每个任务有自己的内核栈 —— 用户态一旦陷入内核，CPU 按 TSS.RSP0 换栈。
- *      这就是本文件里 kstack_top 的作用：换任务时把它写进 TSS.RSP0。
- *   2) 每个任务有自己的"完整现场" —— 现场不是几个寄存器，而是中断帧
- *      （struct regs：15 个通用寄存器 + vector/error + rip/cs/rflags/rsp/ss）。
- *      只要记住这帧在哪块栈上，恢复时 rsp 指回去、弹寄存器、iretq 就完事。
- *   3) 有一个抢占点 —— 时钟中断（IRQ0）。每次进来把当前帧的地址记进 TCB，
- *      配额用完就换人。
- *   4) 有一个就绪队列 —— 本版就是一个定长 TCB 数组 + 从当前位置往后找
- *      READY，等价于 Linux 里最简单的 O(n) 轮转，还没有优先级和 CFS。
- *
- * 与 Linux 的差距（M4 之后仍然缺的）
- *   - 没有 fork/exec/wait：任务由内核在启动时"造"出来，不是用户态生出来的；
- *   - 没有独立地址空间：所有任务共用一张页表，各自只被限制在自己的 2MB 大页里
- *     （靠 U/S 位做不到"互相看不见"，只是"内核看不见用户、用户看不见内核"）；
- *   - 没有优先级、没有睡眠队列、没有 SIGCHLD/SIGKILL 这类信号语义；
- *   - 调度发生点在中断里，内核本身不可抢占（没有 preempt_count）。
- * M5 换成 4KB 页表 + 独立 CR3 之后，第 2 条才会被补上。
+ * 跟 Linux 还差什么（M4 之后仍然缺的）：没有 fork/exec/wait，任务是内核启动时造出来的，
+ * 不是用户态生出来的；没有独立地址空间，所有任务共用一张页表，各自只被限制在自己的
+ * 2MB 大页里，靠 U/S 位做不到"互相看不见"，那只是"用户看不见内核"；没有优先级、
+ * 没有睡眠队列、没有 SIGCHLD/SIGKILL 这类语义；调度点在中断里，内核本身不可抢占。
+ * M5 换成 4KB 页表加独立 CR3 之后，第二条才会补上。
  */
 
 #define TASK_MAX            4
@@ -49,7 +38,7 @@ struct regs;   /* 中断帧，定义在 kernel/isr.h */
 /* 中断帧共 22 个 8 字节槽：15 个通用寄存器 + vector + error + rip/cs/rflags/rsp/ss */
 #define TASK_FRAME_QWORDS   22u
 
-/* ---- [ADD] M18：信号常量必须在 task_t 之前，因为 TCB 里按 ZH_SIG_MAX 开 handler 数组 ---- */
+/* [ADD] M18：信号常量必须在 task_t 之前，因为 TCB 里按 ZH_SIG_MAX 开 handler 数组 */
 #define ZH_SIG_NONE     0u
 #define ZH_SIGINT       2u      /* Ctrl-C */
 #define ZH_SIGKILL      9u      /* 不可捕获、不可忽略 */
@@ -57,7 +46,7 @@ struct regs;   /* 中断帧，定义在 kernel/isr.h */
 #define ZH_SIGCHLD     17u      /* 子进程退出时给父进程的通知 */
 #define ZH_SIGCONT     18u      /* [ADD] M18：让停住的进程继续 */
 #define ZH_SIGSTOP     19u      /* [ADD] M18：停住（不可捕获） */
-#define ZH_SIGTSTP     20u      /* [ADD] M18：Ctrl-Z —— 可捕获的"停住" */
+#define ZH_SIGTSTP     20u      /* [ADD] M18：Ctrl-Z ， 可捕获的"停住" */
 #define ZH_SIG_MAX     32u
 
 enum task_state {
@@ -91,27 +80,27 @@ typedef struct {
     uint64_t fault_rip;
     uint64_t fault_error;       /* [M5] 异常帧里的 error code（0x6 = 页不存在 + 写 + 用户） */
 
-    /* ---- [M5] 每进程独立地址空间 ---- */
+    /* [M5] 每进程独立地址空间 */
     vmm_space_t space;          /* 自己的 PML4/PDPT/PD/PT */
     uint64_t cr3;               /* = space.cr3；0 = 老路径（共用内核页表，不做切换） */
     uint64_t code_pa;           /* 用户代码页的物理地址（内核往里铺机器码用） */
     uint64_t stack_pa;          /* 用户栈页的物理地址 */
     uint32_t space_ready;       /* 地址空间已经建好（重复 taskrun 时复用，不泄漏帧） */
 
-    /* ---- [M7] fork / wait ---- */
+    /* [M7] fork / wait */
     uint32_t parent_pid;        /* fork 出来的子进程记父进程；0xFFFFFFFF = 无父进程 */
     uint32_t has_wait_code;     /* 已经退出、退出码还没被父进程 wait 取走（僵尸位） */
 
-    /* ---- [M9] 每进程文件描述符表 ---- */
+    /* [M9] 每进程文件描述符表 */
     zfile_t  fds[ZH_MAX_FDS];   /* fd 下标 -> (ramfs 节点, 读偏移)；fork 时拷贝一份 */
 
-    /* ---- [ADD] M17：信号 ---- */
+    /* [ADD] M17：信号 */
     uint32_t sig_pending;       /* 待处理信号位图（bit n = 信号 n） */
     uint32_t term_sig;          /* 非 0 = 是被这个信号杀死的（Linux 的 exit_signal） */
     uint32_t sig_mask;          /* 屏蔽字：这些位上的信号先不送（M17 只做保存/恢复） */
     uint32_t foreground;        /* 1 = 它是前台进程（Ctrl-C 的接收者） */
 
-    /* ---- [ADD] M18：信号捕获（handler + sigreturn） ---- */
+    /* [ADD] M18：信号捕获（handler + sigreturn） */
     uint64_t sig_handler[ZH_SIG_MAX];      /* 用户 handler 地址；0 = 默认动作 */
     uint64_t sig_frame[TASK_FRAME_QWORDS]; /* 进 handler 之前那一整帧（22 个 qword） */
     uint32_t sig_in_handler;    /* 1 = 正在 handler 里（防嵌套覆盖 sig_frame） */
@@ -119,9 +108,7 @@ typedef struct {
     uint64_t tramp_pa;          /* 信号蹦床页物理地址（VA 在栈页下面一页） */
 } task_t;
 
-/* ------------------------------------------------------------------ */
 /* 内核侧接口                                                         */
-/* ------------------------------------------------------------------ */
 
 /* 幂等初始化：向页帧分配器要 TASK_MAX 个连续的 2MB 用户窗口。0 成功，-1 失败。 */
 int task_init(void);
@@ -133,59 +120,51 @@ void task_reset(void);
 int task_create(const char *name, uint64_t entry, uint64_t user_sp);
 
 /*
- * [M5] 造一个带独立地址空间的任务：给自己的 PML4/PDPT/PD/PT + 代码页 + 栈页，
- * 代码页映射到 VMM_USER_BASE、栈页映射到窗口最顶上一页，其余 510 页故意不映射
- * （用户一碰就是 #PF，error 的 P 位为 0）。返回 pid，失败 -1。
- * 重复调用复用已建好的地址空间，不会漏帧。
+ * [M5] 造一个带独立地址空间的任务：自己的 PML4/PDPT/PD/PT 加代码页加栈页，代码页映到
+ * VMM_USER_BASE，栈页映到窗口最顶上一页，其余 510 页故意不映射，用户一碰就 #PF
+ * （error 的 P 位为 0）。返回 pid，失败 -1。地址空间建好之后重复调用会复用，不漏帧。
  */
 int task_create_va(const char *name);
 
 /*
- * [M6] 用一段 ELF64 文件建进程：地址空间复用 M5 那套（PML4/PDPT/PD/PT + 栈页），
- * 代码页不再由内核铺，而是由 elf_load_into() 按 PT_LOAD 逐段装进来，
- * 入口地址取 ELF 的 e_entry。img 回填装载统计（段数、页数、字节数）。
- * 返回 pid，失败 -1。
+ * [M6] 用一段 ELF64 文件建进程：地址空间还是 M5 那套（PML4/PDPT/PD/PT 加栈页），
+ * 代码页不由内核铺了，交给 elf_load_into() 按 PT_LOAD 逐段装进来，入口取 e_entry。
+ * img 回填装载统计（段数、页数、字节数）。返回 pid，失败 -1。
  */
 int task_create_elf(const char *name, const uint8_t *blob, uint64_t size,
                     elf_image_t *img);
 
 /*
- * [M7] fork：把"当前任务 + 它此刻的现场"复制成第二个任务。
- *   - 地址空间由 vmm_space_clone() 整页复制（暂不做 COW）；
- *   - 子进程的引导帧 = 父进程此刻中断帧的副本，只把 rax 改成 0；
- *   - 于是父子都从 int 0x80 的下一条指令继续跑，父拿到子进程 pid，子拿到 0。
- *     （Linux 的 fork 返回值语义就是这么实现的：一份寄存器映像复制两份。）
- * 返回子进程 pid，失败 -1。
+ * [M7] fork：把当前任务和它此刻的现场复制成第二个任务。地址空间由 vmm_space_clone()
+ * 整页复制（这时还没做 COW）；子进程的引导帧是父进程中断帧的副本，只把 rax 改成 0；
+ * 于是父子都从 int 0x80 的下一条继续跑，父拿到子 pid，子拿到 0。Linux 的 fork 返回值
+ * 语义就是这么来的：一份寄存器映像复制两份。返回子进程 pid，失败 -1。
  */
 int task_fork_current(struct regs *r);
 
 /*
- * [M7] wait：取一个已退出子进程的退出码。
- *   - 有僵尸子进程 -> 直接返回它的退出码（并释放槽位）；
- *   - 有活着的子进程 -> 把自己标成 TASK_WAIT，调用 schedule_away() 让出 CPU，
- *     子进程退出时会把退出码写回**这个帧的 rax**，父进程被换回时 syscall 就"返回"了；
- *   - 没有子进程 -> 返回 -1。
- * 阻塞分支不会返回到调用者（走 schedule_away 的 noreturn 路径）。
+ * [M7] wait：取一个已退出子进程的退出码。有僵尸子进程就直接返回它的退出码并释放槽位；
+ * 有活着的子进程就把自己标成 TASK_WAIT、调 schedule_away() 让出 CPU，子进程退出时把码
+ * 写回这个帧的 rax，父进程被换回来时 syscall 就"返回"了；没有子进程返回 -1。
+ * 阻塞那条分支不会返回到调用者。
  */
 int task_wait_current(struct regs *r);
 
 /*
- * [M8] exec：把**当前任务**的映像换成一段 ELF，pid 不变、地址空间换新的。
- *   - 新建一个 vmm 空间（旧的不回收，写进已知限制），装载 ELF、映射一页新栈；
- *   - 把中断帧里的 rip 改成 e_entry、rsp 改成新栈顶、rax/rbp 等清零 ——
- *     于是 syscall_dispatch 返回后 iretq 直接落在新程序的入口，
- *     旧程序从这一刻起"从内存里消失"（Linux 的 start_thread() 也是改 pt_regs）；
- *   - 最后 mov cr3 到新空间（内核栈在新空间里也照旧映射着）。
- * 成功 0，失败 -1。
+ * [M8] exec：把当前任务的映像换成一段 ELF，pid 不变，地址空间换新的。
+ * 新建一个 vmm 空间（旧的不回收，写进已知限制），装载 ELF，映射一页新栈；然后把中断帧
+ * 里的 rip 改成 e_entry、rsp 改成新栈顶、rax/rbp 等清零，于是 syscall_dispatch 返回后
+ * iretq 直接落在新程序入口，旧程序从这一刻从内存里消失。Linux 的 start_thread() 也是改
+ * pt_regs。最后 mov cr3 到新空间，内核栈在新空间里照旧映射着。成功 0，失败 -1。
  */
 int task_exec_current(struct regs *r, const uint8_t *blob, uint64_t size,
                       elf_image_t *img);
 
 /*
- * [M11] 带参数的 exec：Linux 里 execve(path, argv, envp) 的 argv 部分。
- * 内核把每个参数字符串拷到**新**地址空间的栈页底部，再在那页里排一个指针数组，
- * 然后把 rdi=argc、rsi=&argv[0] 交给新程序的 _start —— 于是程序第一次能知道
- * "我叫什么名字、带了什么参数"。argv 为 NULL 时等价于老的 exec(path)。
+ * [M11] 带参数的 exec，也就是 Linux execve(path, argv, envp) 里 argv 那部分。内核把每个
+ * 参数字符串拷到新地址空间的栈页底部，在那页里排一个指针数组，然后把 rdi=argc、
+ * rsi=&argv[0] 交给新程序 _start，程序这才知道"我叫什么、带了什么参数"。
+ * argv 为 NULL 时等价于老的 exec(path)。
  */
 int task_exec_current_argv(struct regs *r, const uint8_t *blob, uint64_t size,
                            elf_image_t *img, char *const *argv, uint32_t argc);
@@ -193,17 +172,15 @@ int task_exec_current_argv(struct regs *r, const uint8_t *blob, uint64_t size,
 /* [M7] 当前正在跑的任务 pid；没有任务在跑时返回 0xFFFFFFFF。 */
 uint32_t task_current_pid(void);
 
-/* ---- [ADD] M17：信号 API（常量已在文件上方定义） ---- */
+/* [ADD] M17：信号 API（常量已在文件上方定义） */
 
 /* 信号名（给 kill 命令和日志用）；未知返回 "SIG?"。 */
 const char *task_signal_name(uint32_t sig);
 
 /*
- * [M17] 投递一个信号：只是往 sig_pending 上置一位，**不**立刻打断对方。
- * 真正的"送达"发生在那个进程下一次从内核回 ring3 的那一刻
- * （interrupt_dispatch 的出口），这就是 Linux 里 TIF_NOTIFY_SIGNAL /
- *  ret_from_intr 检查 _TIF_SIGPENDING 的位置。
- * 返回 0 成功；-1 = 没有这个 pid。
+ * [M17] 投递一个信号：只往 sig_pending 置一位，不立刻打断对方。真正送达是在那个进程
+ * 下一次从内核回 ring3 的那一刻（interrupt_dispatch 的出口），对应 Linux 里 ret_from_intr
+ * 检查 _TIF_SIGPENDING 的位置。返回 0 成功，-1 表示没有这个 pid。
  */
 int task_signal(uint32_t pid, uint32_t sig);
 
@@ -216,14 +193,13 @@ void task_clear_foreground(void);   /* [M17] 前台没了（子进程已退出�
 uint32_t task_foreground_pid(void);
 
 /*
- * [M17] 在"内核 -> 用户"的边界上检查待处理信号。有默认动作要执行时：
- *   - 终止类（SIGKILL/SIGINT/SIGTERM，且没装 handler）-> 自杀并 schedule_away()
- *     （不返回），退出码 = 128 + sig，父进程 wait 能拿到；
- *   - 否则清 pending，让 iretq 照常回 ring3。
+ * [M17] 在"内核到用户"的边界上查待处理信号。有默认动作要执行时：终止类（SIGKILL /
+ * SIGINT / SIGTERM 且没装 handler）就自杀并 schedule_away()，不返回，退出码 128 + sig，
+ * 父进程 wait 能拿到；其余情况清 pending，让 iretq 照常回 ring3。
  */
 void task_check_signals(struct regs *r);
 
-/* [M17] 槽位访问（signal.c 用）：按 pid / 按下标取**可写**的 TCB，取不到返回 0。 */
+/* [M17] 槽位访问（signal.c 用）：按 pid / 按下标取可写的 TCB，取不到返回 0。 */
 task_t *task_slot_pid(uint32_t pid);
 task_t *task_slot(uint32_t idx);
 task_t *task_current_slot(void);
@@ -231,7 +207,7 @@ task_t *task_current_slot(void);
 /* [M17] 被信号杀死：标 DEAD、退出码 128+sig、叫醒父进程、换人跑（不返回）。 */
 void task_terminate_by_signal(uint32_t sig) __attribute__((noreturn));
 
-/* [M7] 指定 pid 的 waitpid：等**某个**子进程（pid < 0 表示任意一个）。 */
+/* [M7] 指定 pid 的 waitpid：等某个子进程（pid < 0 表示任意一个）。 */
 int task_waitpid_current(struct regs *r, int32_t pid, uint32_t flags);
 
 /* [ADD] M18：waitpid 的 flags（与 Linux 同名，只做本版用得到的那两位） */
@@ -245,10 +221,10 @@ int task_sigreturn(struct regs *r);
 /* [ADD] M18：任务状态查询（SYS_GETSTATE 用；相当于 /proc/<pid>/stat 的第一个字母） */
 int task_state_of(uint32_t pid);
 
-/* [ADD] M18：SIGSTOP 的默认动作 —— 把自己标成 TASK_STOP 然后让人（不返回）。 */
+/* [ADD] M18：SIGSTOP 的默认动作 ， 把自己标成 TASK_STOP 然后让人（不返回）。 */
 void task_stop_current(uint32_t sig, struct regs *r) __attribute__((noreturn));
 
-/* [ADD] M18：SIGCONT —— 把停住的进程重新放回就绪队列。返回 1 = 它确实曾被停住。 */
+/* [ADD] M18：SIGCONT ， 把停住的进程重新放回就绪队列。返回 1 = 它确实曾被停住。 */
 int task_continue_pid(uint32_t pid);
 
 /* [ADD] M18：把一个任务装进蹦床页（第一次送 handler 之前调用；幂等） */
@@ -288,9 +264,8 @@ uint64_t task_va_base(uint32_t pid);
 /* [M5] 第 pid 个任务的 CR3；没有独立地址空间时返回 0。 */
 uint64_t task_cr3(uint32_t pid);
 
-/* [M5] 当前正在跑的任务的用户窗口虚拟地址基点；没有任务在跑返回 0。
- * 给 syscall.c 的 copy_from_user 校验用：M5 之后用户指针是虚拟地址，
- * 不能再用 M1 那块 2MB 窗口的物理地址去比。 */
+/* [M5] 当前在跑的任务的用户窗口虚拟地址基点，没有任务返回 0。给 syscall.c 的
+ * copy_from_user 用：M5 之后用户指针是虚拟地址，不能拿 M1 那块窗口的物理地址去比。 */
 uint64_t task_user_window_current(void);
 
 /* [M5] 按 pid 取 TCB（只读；槽位空返回 0）。给 `vmspace` 命令打印页表用。 */
@@ -323,14 +298,11 @@ void task_dump(void);
 /* `taskrun` 命令：mode 0 = 正常双任务；mode 1 = 让 B 故意触发 #PF 被单独杀掉。 */
 int task_demo(int mode);
 
-/* ------------------------------------------------------------------ */
 /* kernel/task_switch.asm 提供的三个"永不按常规返回"的入口            */
-/* ------------------------------------------------------------------ */
 /*
- * 注意：zh_sched_enter / zh_sched_leave 刻意"不"标 noreturn ——
- *   它们确实是成对返回的（所有任务死光后 zh_sched_leave 会 ret 回 task_run_all），
- *   标了 noreturn 的话 GCC 会把 task_run_all 里 call 之后的收尾代码整段删掉，
- *   那就永远回不到 Shell 了。这与 kernel/ring3.h 里 usermode_enter 的处理一致。
+ * zh_sched_enter / zh_sched_leave 故意不标 noreturn。它们确实是成对返回的，任务全死光
+ * 之后 zh_sched_leave 会 ret 回 task_run_all；标了 noreturn，GCC 会把 task_run_all 里
+ * call 之后的收尾代码整段删掉，那就永远回不到 Shell。这跟 ring3.h 里 usermode_enter 一样。
  */
 void zh_sched_enter(uint64_t frame);   /* 保存 Shell 现场后跳进第一个任务 */
 void zh_sched_leave(void);             /* 所有任务结束后回到 Shell 现场 */

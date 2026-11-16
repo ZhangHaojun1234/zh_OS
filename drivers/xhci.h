@@ -1,9 +1,4 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    drivers/xhci.h
- * Version: 1.0
- * Brief:   [ADD] M33：xHCI（USB 3.x 控制器）+ HID boot 键盘。
- * ============================================================================ */
+/* xhci.h - M33: xHCI 与 HID boot 键盘的接口 */
 
 #ifndef ZH_OS_XHCI_H
 #define ZH_OS_XHCI_H
@@ -20,7 +15,7 @@ int usb_kbd_ready(void);
 /* 轮询事件环与中断端点，把按下的键喂给 keyboard 驱动。非阻塞，可频繁调用。 */
 void usb_kbd_poll(void);
 
-/* ---- 诊断信息（shell 的 usb 命令用）---- */
+/* 诊断信息（shell 的 usb 命令用） */
 int      xhci_last_error(void);
 uint32_t xhci_bar_low(void);
 uint32_t xhci_max_ports(void);

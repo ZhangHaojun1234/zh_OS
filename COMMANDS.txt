@@ -1,12 +1,8 @@
-================================================================================
- zh_OS 1.0 (x86_64) 命令说明
-================================================================================
- 文件   : COMMANDS.txt
- 版本   : 1.0
- 适用范围: 内置 Shell 命令速查 + 构建/运行命令
- 命令来源: shell/commands.c 的 shell_command_table（当前共 67 条）
- 说明   : 本文件只是文档，不参与编译；改动源码后仍须重新执行 ./build.sh
-================================================================================
+zh_OS 1.0 (x86_64) 命令说明
+
+这份文件是内置 Shell 的速查手册，外加构建和运行时用到的命令。内容跟
+shell/commands.c 的 shell_command_table 对齐（当前 67 条）。它不参与编译，
+改完源码照样得重新跑 ./build.sh。
 
 一、登录与提示符
 --------------------------------------------------------------------------------
@@ -158,7 +154,7 @@
     一致才更新；普通用户指定他人时打印红色 Permission denied.
     更新后同样尝试写入 LBA 200-207，失败时追加黄字只读警告。
     注意：成功文案仍是 "password updated (RAM only, reset on reboot)."
-    —— 该行属既有输出，按「只添加不修改」未改动，实际行为以是否出现
+    ， 该行属既有输出，按「只添加不修改」未改动，实际行为以是否出现
     只读警告为准（无警告即已落盘）。
 
 [11] color
@@ -198,13 +194,13 @@
 
 [18] cpuinfo
     亮青标题 "=== CPU Information ==="，依次输出:
-      Vendor ID  —— 厂商字符串（GenuineIntel / AuthenticAMD 等，黄字），来自 leaf 0
-      Brand String —— 型号（如 QEMU Virtual CPU version 2.5+，浅灰）；
+      Vendor ID  ， 厂商字符串（GenuineIntel / AuthenticAMD 等，黄字），来自 leaf 0
+      Brand String ， 型号（如 QEMU Virtual CPU version 2.5+，浅灰）；
             若 CPU 不支持扩展 leaf 0x80000004 则黄字 "Brand string not supported"
-      Family / Model / Stepping —— 按 Intel SDM 公式解析 leaf 1 的 EAX（亮绿）
-      Features  —— 11 项特性 4 个一行对齐：FPU/MMX/SSE/SSE2/SSE3/SSSE3/SSE4.1/SSE4.2/
+      Family / Model / Stepping ， 按 Intel SDM 公式解析 leaf 1 的 EAX（亮绿）
+      Features  ， 11 项特性 4 个一行对齐：FPU/MMX/SSE/SSE2/SSE3/SSSE3/SSE4.1/SSE4.2/
             AVX/AES/64BIT；支持的亮绿、不支持的深灰
-      Logical processors —— leaf 1 EBX[23:16]，0 时按 1 计（亮青）
+      Logical processors ， leaf 1 EBX[23:16]，0 时按 1 计（亮青）
     全部数值用自实现整型转十进制打印，不链接 libc。
 
 
@@ -223,8 +219,8 @@
 
 [19] ls [path]
     缺省列当前目录，每行 4 个条目：
-      目录 —— 亮蓝 + 结尾 "/"；文件 —— 浅灰 + 文件名 + 十进制大小；
-      非空 .sh 文件 —— 亮绿（可执行示意）。
+      目录 ， 亮蓝 + 结尾 "/"；文件 ， 浅灰 + 文件名 + 十进制大小；
+      非空 .sh 文件 ， 亮绿（可执行示意）。
     路径不存在红字 "ls: no such file or directory"，
     目标是文件时红字 "ls: not a directory"。
 
@@ -355,7 +351,7 @@
         mapped pages: 2 of 512
           VA 0x0000000040000000 -> PA 0x0000000000357000
           VA 0x00000000401ff000 -> PA 0x0000000000358000
-    两个进程的 VA 都是 0x40000000，PA 却不同（A 是 0x357000，B 是 0x35f000）——
+    两个进程的 VA 都是 0x40000000，PA 却不同（A 是 0x357000，B 是 0x35f000），
     这就是"同一虚拟地址、不同物理页"，进程隔离的定义。
     想单独检查页表而不进 ring3：taskrun dry（只建进程 + 打印页表 + 自检走表）。
 
@@ -434,7 +430,7 @@
       - fork() 之后有两个执行流，都从 int 0x80 的下一条指令继续；
         父进程 rax = 子进程 pid，子进程 rax = 0（复制 pt_regs 后把 ax 置 0）；
       - 地址空间是整页复制的（copied pages=2 = 代码页 + 栈页），子进程把全局变量
-        加到 5，父进程读到的仍是 0 —— 内存没有共享；子进程的 cr3 与父进程不同；
+        加到 5，父进程读到的仍是 0 ， 内存没有共享；子进程的 cr3 与父进程不同；
       - 第一次 wait() 走"阻塞"路径：父进程进 TASK_WAIT 让出 CPU，被换回时
         rax 已经是子进程的退出码（由 notify_parent() 写进父进程保存的中断帧）；
       - 第二次 wait() 走"僵尸"路径：子进程先死、父进程后收尸，直接取走退出码。
@@ -468,12 +464,12 @@
         M8 PASS: ...
 
     它验证的是 exec 的语义：
-      - ELF 是按**路径**从文件系统读的（不再是内核里某个 blob 的符号地址）；
+      - ELF 是按路径从文件系统读的（不再是内核里某个 blob 的符号地址）；
       - 同一个 pid 的映像被整体换掉：TCB 的 space/cr3/entry/stack_pa 全换成新的，
-        并把中断帧的 rip 改成 e_entry、rsp 改成新栈顶、通用寄存器清零 ——
+        并把中断帧的 rip 改成 e_entry、rsp 改成新栈顶、通用寄存器清零 ，
         于是 int 0x80 返回后那条 iretq 直接落在新程序入口，旧程序再也回不来；
       - 退出码 42 是 hello 给的（execdemo 失败会退 9），说明跑着的确实是新映像；
-      - 成功时 exec **没有返回值** —— 因为"调用 exec 的那段代码"本身已被替换掉，
+      - 成功时 exec 没有返回值 ， 因为"调用 exec 的那段代码"本身已被替换掉，
         这正是 exec 和 fork 最大的区别（fork 返回两次，exec 一次都不返回）。
 
     实现：kernel/syscall.c 的 sys_exec()（逐字节拷路径 + ramfs_read_file + 64KB 内核缓冲）
@@ -486,7 +482,7 @@
 
 [37] fd（M9：每进程 fd 表）
     用法：fd
-    做的事：从 ramfs 装载 /bin/fddemo.elf 建进程，然后**用户程序自己**去打开文件。
+    做的事：从 ramfs 装载 /bin/fddemo.elf 建进程，然后用户程序自己去打开文件。
     内核只提供三个门：OPEN(11) / READ(12) / CLOSE(13)；真正维护状态的是 TCB 里的 fd 表
     （ZH_MAX_FDS=8 项，每项 = { 用了没, 指向哪个 ramfs 节点, 读偏移 }）。
     一屏输出：
@@ -506,7 +502,7 @@
       M9 PASS: ...
 
     它验证的是 fd 的语义（与 Linux 对齐的三点）：
-      - fd 是**下标**不是指针：用户只拿到 0、1、2…，越界/伪造的 fd 一律 -1；
+      - fd 是下标不是指针：用户只拿到 0、1、2…，越界/伪造的 fd 一律 -1；
       - 读偏移挂在 fd 上（相当于 struct file 的 f_pos），所以第二次 read 读到的是
         魔数之后的字节，而不是又从头读一遍；
       - close(fd) 之后同一个 fd 立即失效（再 read 返回 -1）；
@@ -514,7 +510,7 @@
     另外 fork 出来的子进程会继承父进程的 fd 表（file_table_clone），
       与 Linux"fork 后父子共享已打开文件"的最小版本一致。
     程序自检五项全过才 exit(0)；`fd` 命令再按内核计数器（open ok / denied / read / close）
-      二次核对，两边对不上就判失败 —— 用户说"我读到了"必须和内核说"你确实读过"一致。
+      二次核对，两边对不上就判失败 ， 用户说"我读到了"必须和内核说"你确实读过"一致。
     已知限制：只读（没有 creat/write/unlink）、没有 dup/pipe/lseek、没有 O_* 标志位，
       sys_write 仍然只写屏幕。
     验收脚本：bash build/qemu_verify_fd.sh（3 屏：ls /bin / fd / elf exec 回归）
@@ -522,7 +518,7 @@
 
 [38] wr（M10：可写文件）
     用法：wr
-    做的事：从 ramfs 装载 /bin/wrdemo.elf，然后**用户程序自己**建文件、写文件、读回来。
+    做的事：从 ramfs 装载 /bin/wrdemo.elf，然后用户程序自己建文件、写文件、读回来。
     新增系统调用：CREAT(14) / FWRITE(15) / UNLINK(16)。
       - creat：父目录可写才允许；不存在就建、存在就清空（等价 Linux creat(path,0666)）。
       - write：追加写（ramfs_node_append 重新分配 + 拷旧 + 接新 + 释放旧），
@@ -544,7 +540,7 @@
         after run        : state=DEAD  exit code=0  faults=0
         fs counters      : creat=1  writes=2  bytes=68  opens=1
       M10 PASS (files): ...
-    PASS 之后紧接着在同一次开机里执行 `cat /home/zh/m10.txt`，应当看到同样两行 ——
+    PASS 之后紧接着在同一次开机里执行 `cat /home/zh/m10.txt`，应当看到同样两行 ，
       这证明内容留在 ramfs 里，而不是程序自己的内存里。
 
 [39] spawn（M10：fork -> exec -> wait）
@@ -568,7 +564,7 @@
         kernel counters  : forks +1  execs +1  waits +1
       M10 PASS (processes): ...
     看点：两处 cr3 不同（fork 给子进程一套、exec 又换一套），说明"子进程的地址空间"
-      与"父进程的地址空间"是两回事；而父进程拿到的 42 是 hello 的退出码 —— exec 之后
+      与"父进程的地址空间"是两回事；而父进程拿到的 42 是 hello 的退出码 ， exec 之后
       新映像的 exit 才算数。
     验收脚本：bash build/qemu_verify_m10.sh（4 屏：wr / cat / spawn / fd 回归）
               关键行应出现 "M10 PASS" 与 "wait() -> 42"。
@@ -618,10 +614,10 @@
 
 [64] usb
     打印 xHCI 控制器与 HID 键盘的状态：
-      BAR0 / ports / slots   —— 控制器寄存器基址与能力（HCSPARAMS1）
-      port speed / slot / HID ep —— 键盘所在端口速度、分配的 slot、HID 端点地址
-      reports / last key usage   —— 累计收到的 HID 报告数、最近一次的 usage id
-      ring enq / pending / evt deq —— 中断端点环的入队下标、在途传输数、事件环消费下标
+      BAR0 / ports / slots   ， 控制器寄存器基址与能力（HCSPARAMS1）
+      port speed / slot / HID ep ， 键盘所在端口速度、分配的 slot、HID 端点地址
+      reports / last key usage   ， 累计收到的 HID 报告数、最近一次的 usage id
+      ring enq / pending / evt deq ， 中断端点环的入队下标、在途传输数、事件环消费下标
     键盘没起来时打印最后一条错误码（xhci_last_error 取负），便于定位卡在哪一步。
 
 [65] fontscale <1..4>
@@ -731,9 +727,9 @@
     5) argv=NULL 时等于老的 exec(path)，老程序不受影响。
 
   顺带修掉的两个内核必修项（都不是程序写错）：
-    * CR4.OSFXSR / OSXMMEXCPT 没开 —— ring3 执行 gcc 自动向量化出的 SSE 指令
+    * CR4.OSFXSR / OSXMMEXCPT 没开 ， ring3 执行 gcc 自动向量化出的 SSE 指令
       （movq (%rip),%xmm0 / movaps）会直接 #UD（vector 6）；
-    * 用户栈顶 16 对齐 —— gcc 假定函数是被 call 进来的（入口 rsp ≡ 8 mod 16），
+    * 用户栈顶 16 对齐 ， gcc 假定函数是被 call 进来的（入口 rsp ≡ 8 mod 16），
       对齐不对 movaps %xmm0,(%rsp) 就是 #GP（vector 13）。栈顶改成 SPAN-8。
 
   预期输出（关键行）：
@@ -752,7 +748,7 @@
 [41] mm（M12：地址空间回收）
 --------------------------------------------------------------------------------
   作用：证明 exec 换下来的旧 mm 真的被销毁了。跑 /bin/reexec.elf，它靠 argv
-        把"剩余深度"传下去，连续 exec 自己 7 次 —— 每次都建一整套新 mm。
+        把"剩余深度"传下去，连续 exec 自己 7 次 ， 每次都建一整套新 mm。
         命令对比运行前后的页帧空闲数：如果回收缺失，7 次要吃掉 40 多帧。
 
   内核做了什么（M12 的核心）：
@@ -774,9 +770,9 @@
     M12 PASS: every exec() destroyed the mm it replaced.
 
   读法：delta=8 就是"最后一个还活着的进程那一套 mm"，与 exec 次数无关；
-        再跑一次 mm，delta 变 6、终点仍是 29713 —— 账稳、不累积。
+        再跑一次 mm，delta 变 6、终点仍是 29713 ， 账稳、不累积。
 
-  注意：第一次跑 mm 曾经报 "leaked 2056 frames"，那不是漏洞而是测量点错了 ——
+  注意：第一次跑 mm 曾经报 "leaked 2056 frames"，那不是漏洞而是测量点错了 ，
         task_init() 第一次调用会一次性分配 8MB 用户窗口池（2048 帧），
         命令现在先 task_init() 再开始量账。
 
@@ -804,10 +800,10 @@
     ^Z          -> 键盘驱动认出 Ctrl-Z，IRQ1 里 task_signal_foreground(SIGTSTP)
                    -> 前台进程 TASK_STOP（pick_next 不再挑它），屏幕 tick 立刻停
                    -> 父进程的 waitpid(pid, WUNTRACED) 立刻返回 0x10000|20
-                   -> 打印 [1] Stopped   jobdemo ，进程**还在内存里**
+                   -> 打印 [1] Stopped   jobdemo ，进程还在内存里
     jobs        -> 逐个 SYS_GETSTATE(pid)：Stopped / Running / Done
     fg 1        -> kill(pid, SIGCONT)（内核直接放回就绪队列）+ SETFG + waitpid
-                   进程从**被停住的那一行**接着跑（frame 一直在 TCB 里）
+                   进程从被停住的那一行接着跑（frame 一直在 TCB 里）
     bg 1        -> 只发 SIGCONT，不 wait，回提示符（它在后台继续跑）
     ^C          -> SIGINT：装了 handler 就跑 handler（sigcatch），没装就 130 死掉
 
@@ -828,7 +824,7 @@
     M13 PASS: the shell itself ran in ring 3 and its commands were real processes.
 
   提示：敲不存在的名字（比如 argv，真正的程序叫 argvdemo）会看到
-        "cannot exec (no such program in /bin)" 和 [xxx exited 127] —— 这是对的。
+        "cannot exec (no such program in /bin)" 和 [xxx exited 127] ， 这是对的。
 
   验收：bash build/qemu_verify_m13.sh     -> build/m13_verify/（4 屏）
         全量回归 bash build/regress_all.sh  -> M2 … M18
@@ -897,7 +893,7 @@
     M16 PASS: ...
 
   注意：读也会触发 #PF（按需分配不分读写）。所以"遍历 16 页检查它们都是 0"这种验证
-        本身就会把 16 页全买回来 —— demo 因此只碰 3 页，而且是跳着碰。
+        本身就会把 16 页全买回来 ， demo 因此只碰 3 页，而且是跳着碰。
 
   验收：bash build/qemu_verify_m16.sh   -> build/m16_verify/（3 屏：demand / cow / sh3）
         全量回归 bash build/regress_all.sh  -> M2 … M16
@@ -905,7 +901,7 @@
 [45] sig（M17：信号 + waitpid + Ctrl-C）
 --------------------------------------------------------------------------------
   作用：两段。
-        1) 在内核里造一个 /bin/spin.elf 的自旋进程，**还没跑**就 kill(pid, SIGKILL)：
+        1) 在内核里造一个 /bin/spin.elf 的自旋进程，还没跑就 kill(pid, SIGKILL)：
            它第一次从内核回 ring3 时被 128+9=137 杀掉，term_sig=9。
         2) 跑 /bin/sigdemo.elf（父子都在 ring3）：子进程纯自旋（零系统调用），
            父进程 sleep 30 tick 后 kill(child, SIGKILL)，再 waitpid(child) 拿回 137。
@@ -926,7 +922,7 @@
       [kernel] ^C -> SIGINT queued for the foreground process
       [kernel] pid N terminated by SIGINT (2), exit code 130
       [spin killed by signal 2 SIGINT, status 130]
-    提示符还在 —— 只杀前台那一个，shell 不受影响。
+    提示符还在 ， 只杀前台那一个，shell 不受影响。
 
   实现要点：
     SYS_WAITPID 21 (int pid)      等指定子进程（-1 = 任意）
@@ -971,7 +967,7 @@
 --------------------------------------------------------------------------------
   作用：从根 inode 2 开始逐段 dir_lookup()，命中后 read_inode() 下行，最后遍历目录块。
         目录项是变长记录：inode(4) rec_len(2) name_len(1) file_type(1，可选) name。
-        file_type 是否存在取决于 s_feature_incompat 的 FILETYPE(0x2) 位 ——
+        file_type 是否存在取决于 s_feature_incompat 的 FILETYPE(0x2) 位 ，
         这一位决定名字从偏移 8 还是 7 开始，本实现两种都支持。
         跳过 "." 与 ".."，目录亮蓝带 '/'、文件浅灰、每行 4 个（与 fatls 同一套视觉语言）。
 
@@ -1037,7 +1033,7 @@
       (empty: every path goes to ramfs)
 
   匹配规则：最长前缀匹配，且前缀之后必须正好是 '\0' 或 '/'（"/mntx" 不会命中 "/mnt"）。
-  没匹配上的路径原样回落 ramfs —— 挂载表空着时，ls/cd/pwd/cat 与 M19 完全一致。
+  没匹配上的路径原样回落 ramfs ， 挂载表空着时，ls/cd/pwd/cat 与 M19 完全一致。
 
   验收：bash build/qemu_verify_m20.sh -> build/m20_verify/（3 屏）
         -> M20 PASS: one namespace -- /mnt is ext2, everything else is ramfs
@@ -1156,7 +1152,7 @@
 [60] ahci（M31：控制器、端口，以及一次真实的扇区读）
    用法：ahci
    打印 ABAR / CAP / 端口实现位图 PI，以及选中的 active port 与 PxSIG
-   （0x00000101 = SATA 硬盘）。然后读 LBA2 —— ext2 超级块所在扇区，
+   （0x00000101 = SATA 硬盘）。然后读 LBA2 ， ext2 超级块所在扇区，
    打印前 4 字节与偏移 56 处的 magic：0xEF53 说明整条 DMA 通路是对的。
    控制器没起来时改打诊断：ABAR/CAP/PI 加每个端口的 SIG/SSTS/CMD。
 
@@ -1184,7 +1180,7 @@
 
   大分辨率（M27 修复）：换模式前先按新几何补页表（paging_map_2mb_range），
         映射不出来就红字拒绝、不切模式。之前 res 1920X1080 会 #PF(write, not present)
-        然后 KERNEL PANIC —— 因为启动时只按 1280x800 映射了约 4MB 帧缓冲，
+        然后 KERNEL PANIC ， 因为启动时只按 1280x800 映射了约 4MB 帧缓冲，
         1920x1080x32 要 8.3MB，写到 4MB 之后就踩空了。现在是先映射后切模式，
         上限 2560x1600（内核对 w/h 的硬限制），来回换档也不会重复吃页目录。
         实测：res 1920*1080 -> framebuffer 1920x1080x32 pitch 7680 / 240x67，无 panic。
@@ -1198,13 +1194,13 @@
 [61] nvme（M32：环形队列里的 PCIe SSD）
    用法：nvme
    打印 BAR0、控制器版本 VS、型号字符串、命名空间号、逻辑块大小、总扇区数，
-   然后读 LBA2 —— ext2 超级块所在扇区，magic（偏移 56）应为 0xEF53。
+   然后读 LBA2 ， ext2 超级块所在扇区，magic（偏移 56）应为 0xEF53。
 
    NVMe 与 AHCI 的结构差别：
      - 命令是环形队列里的 64 字节项，写进 SQ 后敲 SQ 门铃（BAR0 + 0x1000）；
      - 控制器把 16 字节的完成项写进 CQ，靠完成项里的 phase 位判断"有没有新的"，
        每绕队列一圈 phase 翻转一次；
-     - 数据地址在 DW6（PRP1），不是 DW12 —— 写错位置会被当成 0，
+     - 数据地址在 DW6（PRP1），不是 DW12 ， 写错位置会被当成 0，
        控制器立刻报"成功"但一个字节都不搬（M32 踩过这个坑）。
 
    M32 之后 ata_read_sector / ata_write_sector / ata_disk_present 的优先级是

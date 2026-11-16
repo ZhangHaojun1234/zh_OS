@@ -1,13 +1,5 @@
-/* ============================================================================
- * zh_OS 0.2beta (x86_64)
- * File:    users/users_persist.h
- * Version: 0.2beta
- * Brief:   用户表磁盘持久化的公开接口声明。
- *
- * B 组第 2 个功能（ATA PIO + 用户表持久化）的纯增量新增文件。
- * 落盘位置固定为 LBA 200 起、共 8 个扇区（4KB），足以容纳
- * ZH_USER_MAX(16) 条账户记录。错误码复用 drivers/ata.h 的 ATA_*。
- * ============================================================================ */
+/* users_persist.h - 用户表落盘的接口。位置固定 LBA 200 起八个扇区（4KB），
+ * 够装 ZH_USER_MAX(16) 条记录，错误码复用 ATA_*。 */
 
 #ifndef ZH_OS_USERS_PERSIST_H
 #define ZH_OS_USERS_PERSIST_H

@@ -1,27 +1,11 @@
-; ============================================================================
-; zh_OS 0.2beta (x86_64)
-; File:    kernel/ring3.asm
-; Version: 0.2beta
-; Brief:   M2 系统调用：进 ring3 的入口（保存内核现场）与从 ring3 回内核的出口。
-; ============================================================================
-;
-; 为什么要有这个文件
-; ------------------
-; M1（kernel/usermode.c）用一段内联汇编 iretq 进用户态，那条路是"单向"的：
-; 用户态出错只能 panic 停机。M2 要让它变成"双向"的：
-;
-;   usermode_enter  : kernel -> ring3，进去之前把内核现场存好
-;   usermode_resume : ring3  -> kernel，把现场还原，直接 ret 回调用点
-;
-; 关键点：从 ring3 陷入内核时，CPU 用 TSS.RSP0 换到一块单独的 16KB 内核栈
-; （kernel/tss.c 的 g_tss_kernel_stack），Shell 自己的栈一字节都没被碰过。
-; 所以 usermode_resume 只要把 rsp 拨回 kernel_resume_rsp、再 ret，
-; 就精确回到 usermode_enter 的调用者，Shell、局部变量、返回地址全是原样。
-;
-; 但 callee-saved 寄存器（rbx / rbp / r12-r15）跑在中断栈上的那段 C 代码里
-; 是会被改的，而且 sys_exit 不经过 isr_common 的 pop 序列，所以这里
-; 单独存一份、单独还一份。漏掉 rbp 的话，回 Shell 后第一个 leave 就会崩。
-; ============================================================================
+; ring3.asm - 进 ring3 的入口，和从 ring3 回内核的出口。
+; M1（usermode.c）用内联汇编 iretq 进用户态，那条路是单向的，用户态出错只能 panic 停机。
+; M2 要让它双向：usermode_enter 进之前把内核现场存好，usermode_resume 把现场还原、直接 ret 回调用点。
+; 关键在栈：从 ring3 陷进来时 CPU 用 TSS.RSP0 换到一块单独的 16KB 内核栈（tss.c 的
+; g_tss_kernel_stack），Shell 自己的栈一字节都没被碰。所以 usermode_resume 只要把 rsp 拨回
+; kernel_resume_rsp 再 ret，就精确回到 usermode_enter 的调用者，Shell、局部变量、返回地址全是原样。
+; 但 callee-saved 寄存器（rbx / rbp / r12-r15）在中断栈上那段 C 代码里会被改，而且 sys_exit
+; 不走 isr_common 的 pop 序列，所以这里单独存一份、单独还一份。漏掉 rbp 的话，回 Shell 后第一个 leave 就崩。
 
 bits 64
 
@@ -42,11 +26,9 @@ section .text
 global usermode_enter:function
 global usermode_resume:function
 
-; ---------------------------------------------------------------------------
 ; void usermode_enter(uint64_t rip, uint64_t rsp, uint64_t rflags,
 ;                     uint64_t cs,  uint64_t ss);
 ;   SysV 参数：rdi=rip  rsi=rsp  rdx=rflags  rcx=cs  r8=ss
-; ---------------------------------------------------------------------------
 usermode_enter:
     mov [rel kernel_resume_rsp], rsp    ; 此刻 rsp 正指着 call 压进来的返回地址
 
@@ -65,10 +47,8 @@ usermode_enter:
     push rdi                            ; RIP = 用户代码入口
     iretq                               ; 返回 = 降权进 ring3
 
-; ---------------------------------------------------------------------------
 ; void usermode_resume(void);   永不返回
 ;   由 sys_exit 调用：丢掉 ring0 那套处理栈，回到 usermode_enter 的调用点。
-; ---------------------------------------------------------------------------
 usermode_resume:
     mov rsp, [rel kernel_resume_rsp]
 

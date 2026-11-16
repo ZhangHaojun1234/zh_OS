@@ -1,10 +1,4 @@
-/* ============================================================================
- * zh_OS 0.2beta (x86_64)
- * File:    mm/heap.c
- * Version: 0.2beta
- * Brief:   2MB 内核堆：bump 分配、8 字节对齐、空闲链表回收与相邻块合并，
- *          以及 meminfo 命令实现。纯增量模块，不改动任何已有功能。
- * ============================================================================ */
+/* heap.c - 2MB 内核堆：bump 分配、8 字节对齐、空闲链表回收加相邻块合并，外加 meminfo 命令 */
 
 #include "heap.h"
 
@@ -14,28 +8,23 @@
 #include "klog.h"  // [ADD]
 
 /*
- * 设计说明
- * --------
- * 池：.bss 中的静态数组 heap_pool[2MB]，4K 对齐。它落在 boot.asm 建立的
- *     低 1GB 恒等映射内，不需要新增页表映射；GRUB 加载 ELF 时 .bss 已清零。
+ * 池：.bss 里一个静态数组 heap_pool[2MB]，4K 对齐。它落在 boot.asm 建的低 1GB 恒等映射内，
+ * 不用新增页表；GRUB 加载 ELF 时 .bss 已经清零。
  *
- * 块布局：每个块紧跟一个 24 字节头，之后是 8 字节对齐的 payload：
+ * 块布局：每个块紧跟一个 24 字节头，之后是 8 字节对齐的 payload，
  *     [ header: size | magic | next ][ payload ... ]
- *     size 是 payload 字节数（已按 8 对齐），next 只在空闲链表里有效。
- *     heap_pool 基址 4K 对齐、头大小 24 是 8 的倍数，所以 payload 天然 8 对齐。
+ * size 是 payload 字节数（按 8 对齐），next 只在空闲链表里有效。heap_pool 基址 4K 对齐、
+ * 头 24 字节是 8 的倍数，所以 payload 天然 8 对齐。
  *
- * 分配：先按 first-fit 在空闲链表里找可复用块；找不到再从 heap_brk 处
- *     bump 一块。本版不做块拆分（教学实现，内部碎片可接受）。
+ * 分配先按 first-fit 在空闲链表里找可复用块，找不到再从 heap_brk 处 bump 一块。
+ * 本版不拆块，教学实现，内部碎片可接受。
+ * 回收是 kfree 把块挂回空闲链表，heap_coalesce() 反复扫链表，把物理上首尾相接的空闲块合并，
+ * 直到没有可合并的为止。
  *
- * 回收：kfree 把块挂回空闲链表，heap_coalesce() 反复扫描链表，把物理上
- *     首尾相接的空闲块合并，直到没有可合并项为止。
- *
- * 统计口径：heap_brk 是从池里切走的字节总数；空闲链表里所有块的
- *     (header + size) 之和记为可复用字节。used = brk - 可复用，
- *     free = 2MB - used。所以初始 used=0 / free=2097152，
- *     全部释放并合并后能精确回到这个数字。
- *
- * 出错策略：越界、重复 free、池耗尽一律打印亮红错误并返回，绝不 panic。
+ * 统计口径：heap_brk 是从池里切走的字节总数，空闲链表里所有块的 (header + size) 之和记为
+ * 可复用字节，used = brk - 可复用，free = 2MB - used。所以初始 used=0、free=2097152，
+ * 全释放并合并之后能精确回到这个数。
+ * 出错策略：越界、重复 free、池耗尽一律打印亮红错误并返回，不 panic。
  */
 
 #define HEAP_POOL_BYTES   (2u * 1024u * 1024u)
@@ -62,9 +51,7 @@ static uint64_t alloc_count;
 static uint64_t free_count;
 static int heap_ready;
 
-/* ------------------------------------------------------------------ */
 /* 本地工具（freestanding 无 libc）                                   */
-/* ------------------------------------------------------------------ */
 
 static uint8_t *payload_of(heap_block_t *b)
 {
@@ -117,9 +104,7 @@ static uint64_t heap_used_bytes(void)
     return (reclaimed <= heap_brk) ? (heap_brk - reclaimed) : 0u;
 }
 
-/* ------------------------------------------------------------------ */
 /* 初始化                                                             */
-/* ------------------------------------------------------------------ */
 
 void heap_init(void)
 {
@@ -133,9 +118,7 @@ void heap_init(void)
     klog("heap initialized"); // [ADD]
 }
 
-/* ------------------------------------------------------------------ */
 /* 分配                                                               */
-/* ------------------------------------------------------------------ */
 
 void *kmalloc(uint64_t size)
 {
@@ -195,9 +178,7 @@ void *kzalloc(uint64_t size)
     return p;
 }
 
-/* ------------------------------------------------------------------ */
 /* 回收与相邻块合并                                                   */
-/* ------------------------------------------------------------------ */
 
 static void heap_coalesce(void)
 {
@@ -276,9 +257,7 @@ void kfree(void *ptr)
     heap_coalesce();
 }
 
-/* ------------------------------------------------------------------ */
 /* 统计输出                                                           */
-/* ------------------------------------------------------------------ */
 
 void heap_stats(void)
 {
@@ -325,9 +304,8 @@ static void heap_brief(const char *label)
 }
 
 /*
- * 可选自测（meminfo test）：跑几次 kmalloc/kzalloc/kfree，
- * 验证统计、相邻块合并、重复 free、越界与池耗尽处理，最后把堆还原。
- * 无参数的 meminfo 不会走这里，只打印 heap_stats() 的结果。
+ * 可选自测（meminfo test）：跑几轮 kmalloc/kzalloc/kfree，验统计、相邻块合并、重复 free、
+ * 越界和池耗尽，最后把堆还原。不带参数的 meminfo 不走这里，只打 heap_stats() 的结果。
  */
 static void heap_selftest(void)
 {
@@ -369,9 +347,7 @@ static void heap_selftest(void)
     heap_brief("final    ");
 }
 
-/* ------------------------------------------------------------------ */
 /* meminfo 命令                                                       */
-/* ------------------------------------------------------------------ */
 
 int cmd_meminfo(int argc, char **argv)
 {

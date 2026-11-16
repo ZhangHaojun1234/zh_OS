@@ -1,20 +1,8 @@
-/* ============================================================================
- * zh_OS 0.2beta (x86_64)
- * File:    user/ls.c
- * Version: 0.2beta
- * Brief:   M14：真正跑在 ring 3 的 ls（/bin/ls.elf）。
- *
- * 以前 ls 是内核里的 cmd_ls()：它直接遍历 ramfs 的 children 链表。
- * 这个程序做同一件事，但它看不见任何 ramfs 结构体 —— 它只有 SYS_READDIR：
- *
- *     readdir(path, index, name_buf) -> 0 = 文件，1 = 目录，-1 = 没有了
- *
- * 用法（和 Linux 一样）：
- *     ls            列当前目录（靠 SYS_GETCWD 拿到路径）
- *     ls /bin       列指定目录
- *
- * 目录后面补一个 '/'，这是本版 ls 唯一"花"的一点点格式。
- * ============================================================================ */
+/* ls.c - M14 里真正跑在 ring3 的 ls（/bin/ls.elf）。
+ * 以前是内核的 cmd_ls()，直接遍历 ramfs 的 children 链表。这个程序看不见任何 ramfs 结构体，
+ * 手里只有 SYS_READDIR：readdir(path, index, name_buf) 返回 0 文件 / 1 目录 / -1 没有了。
+ * 用法跟 Linux 一样：ls 列当前目录（路径靠 SYS_GETCWD 拿），ls /bin 列指定目录。
+ * 目录名后面补一个 '/'，这是这版 ls 唯一花的一点格式。 */
 
 typedef unsigned long u64;
 typedef unsigned int u32;

@@ -1,12 +1,4 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    fs/ramfs.c
- * Version: 1.0
- * Brief:   ramfs 内存态文件系统实现（节点管理、路径解析、权限判断）。
- *
- * B 组第 1 个功能，纯增量「只添加，不修改」：本文件与 ramfs.h 都是新文件，
- * 已有模块只追加 include 与初始化调用 / 命令注册，不改动任何已有行。
- * ============================================================================ */
+/* ramfs.c - 内存文件系统：节点管理、路径解析、权限判断 */
 
 #include "ramfs.h"
 
@@ -15,9 +7,7 @@
 #include "../users/users.h"   /* user_current / user_is_root：权限判断 */
 #include "../mm/heap.h"       /* kmalloc / kfree：节点与文件内容分配 */
 
-/* ------------------------------------------------------------------ */
 /* 本地常量与工具                                                     */
-/* ------------------------------------------------------------------ */
 
 #define RAMFS_MAX_COMP  16u    /* 路径最多 16 段（含 ~ 展开后） */
 #define RAMFS_COMP_SZ   64u    /* 单段名字长度（与 name[64] 对齐） */
@@ -47,9 +37,7 @@ static void ramfs_strcpy(char *dst, const char *src)
 static ramfs_node_t *g_root = 0;
 static ramfs_node_t *g_cwd  = 0;
 
-/* ------------------------------------------------------------------ */
 /* 节点创建与链表操作                                                 */
-/* ------------------------------------------------------------------ */
 
 static ramfs_node_t *ramfs_node_new(const char *name, ramfs_type_t type)
 {
@@ -106,9 +94,7 @@ static void node_detach(ramfs_node_t *parent, ramfs_node_t *child)
     }
 }
 
-/* ------------------------------------------------------------------ */
 /* 权限：当前用户 home 路径与 home 子树判定                            */
-/* ------------------------------------------------------------------ */
 
 /* 当前用户的 home 绝对路径；init 阶段（未登录）或 home 为空时返回 "/" */
 static const char *home_path(void)
@@ -214,9 +200,9 @@ static bool can_write(ramfs_node_t *dir)
     return in_home(dir);
 }
 
-/* [ADD] M8：`/bin` 是"程序目录"，按 Linux 惯例对所有人可读（相当于 0755）。
- * ramfs 没有 mode 位，所以这里按路径判断：根节点下的 bin 子树一律可读可进入。
- * 有了它，普通用户才能 exec("/bin/xxx.elf") —— 就像 Linux 里谁都能执行 /bin/sh。 */
+/* [ADD] M8：/bin 是程序目录，按 Linux 惯例对所有人可读，相当于 0755。ramfs 没有 mode 位，
+ * 所以这里按路径判断：根节点下的 bin 子树一律可读可进入。有了它，普通用户才能
+ * exec("/bin/xxx.elf")，就像 Linux 里谁都能执行 /bin/sh。 */
 static bool in_bin_dir(ramfs_node_t *node)
 {
     ramfs_node_t *n = node;
@@ -247,16 +233,12 @@ static bool can_read(ramfs_node_t *dir)
     return in_home(dir) || in_bin_dir(dir);
 }
 
-/* ------------------------------------------------------------------ */
 /* 路径解析                                                           */
-/* ------------------------------------------------------------------ */
 
 /*
- * 把 path 切成段，处理：
- *   - 绝对路径（以 '/' 开头）或 ~ 前缀（展开为 home 的绝对段）
- *   - 重复 '/' 视为单分隔符
- * 返回 absolute（是否绝对/以~开头），段写入 comps，*ncomp 为段数。
- * home 在 init 阶段为 "/"，故 ~ 展开为空集，等价于回到根。
+ * 把 path 切成段。绝对路径（以 '/' 开头）和 ~ 前缀（展开成 home 的绝对段）都认，重复的 '/' 当
+ * 单个分隔符。返回 absolute（是否绝对或以 ~ 开头），段写进 comps，*ncomp 是段数。
+ * home 在 init 阶段是 "/"，所以 ~ 展开成空集，等于回到根。
  */
 static int tokenize(const char *path, bool *absolute,
                     char comps[RAMFS_MAX_COMP][RAMFS_COMP_SZ], int *ncomp)
@@ -431,9 +413,7 @@ static ramfs_node_t *resolve_parent(const char *path, char *out_name, int *err)
     return descend(g_root, comps, n - 1, err);
 }
 
-/* ------------------------------------------------------------------ */
 /* 对外接口                                                           */
-/* ------------------------------------------------------------------ */
 
 void ramfs_init(void)
 {
@@ -650,9 +630,7 @@ const char *ramfs_strerror(int rc)
     }
 }
 
-/* ------------------------------------------------------------------ */
 /* [ADD] M9：给 fd 表用的三个接口                                     */
-/* ------------------------------------------------------------------ */
 
 /* 打开前的检查：路径存在 + 是文件 + 当前用户可读。成功回填节点指针。 */
 int ramfs_open_check(const char *path, ramfs_node_t **out)
@@ -674,18 +652,16 @@ int ramfs_open_check(const char *path, ramfs_node_t **out)
 }
 
 /*
- * [M14] readdir：按序号枚举目录条目（Linux 的 getdents 的雏形）。
- *   path  : 目录路径（NULL 或空串 = 当前目录）
+ * [M14] readdir：按序号枚举目录条目，Linux getdents 的雏形。
+ *   path  : 目录路径，NULL 或空串表示当前目录
  *   index : 从 0 开始的序号
- *   name  : 输出缓冲，写节点名（不含 '/'）
+ *   name  : 输出缓冲，写节点名，不含 '/'
  *   cap   : 输出缓冲容量
  *   type  : 回填 RAMFS_FILE / RAMFS_DIR
- * 返回：RAMFS_OK 成功；RAMFS_ERR_NOENT 没有这个序号了（枚举结束）；
- *       RAMFS_ERR_NOTDIR 不是目录；RAMFS_ERR_PERM 越权。
- *
- * 为什么不返回一个"目录句柄"？因为本版没有 fd 之外的进程资源概念，
- * 用"序号"足以让 ls 一页页翻完一个目录 —— 和 Linux 的 readdir(fd) 效果一样，
- * 只是少了那个 fd（真正省事的地方在于调用方不需要 close）。
+ * 返回 RAMFS_OK 成功、RAMFS_ERR_NOENT 没有这个序号了（枚举结束）、RAMFS_ERR_NOTDIR 不是
+ * 目录、RAMFS_ERR_PERM 越权。
+ * 不返回目录句柄，是因为本版没有 fd 之外的进程资源概念，用序号就够让 ls 一页页翻完一个目录，
+ * 效果跟 Linux 的 readdir(fd) 一样，只是省了那个 fd，调用方也不用 close。
  */
 int ramfs_readdir(const char *path, uint32_t index, char *name, uint32_t cap,
                   ramfs_type_t *type)
@@ -737,8 +713,8 @@ uint64_t ramfs_node_size(const ramfs_node_t *node)
 }
 
 /*
- * 从 node 的 off 处读最多 maxlen 字节。这里不做权限检查 —— open 时已经查过，
- * 与 Linux 一致（read 只认 fd，不再回头查 inode 权限）。
+ * 从 node 的 off 处读最多 maxlen 字节。这里不查权限，open 时已经查过了，跟 Linux 一致：
+ * read 只认 fd，不再回头查 inode 权限。
  */
 int ramfs_node_read_at(ramfs_node_t *node, uint64_t off, uint8_t *buf,
                        uint64_t maxlen, uint64_t *outlen)
@@ -769,13 +745,11 @@ int ramfs_node_read_at(ramfs_node_t *node, uint64_t off, uint8_t *buf,
     return RAMFS_OK;
 }
 
-/* ------------------------------------------------------------------ */
 /* [ADD] M10：可写文件（creat / append）                                */
-/* ------------------------------------------------------------------ */
 
 /*
- * creat：父目录可写才允许；目标不存在就新建，存在且是文件就清空（O_TRUNC）。
- * 与 Linux 的 creat(path, 0666) 对应，只是这里没有 mode 位。
+ * creat：父目录可写才允许。目标不存在就新建，存在且是文件就清空（O_TRUNC）。对应 Linux 的
+ * creat(path, 0666)，只是这里没有 mode 位。
  */
 int ramfs_create_file(const char *path, ramfs_node_t **out)
 {
@@ -810,9 +784,8 @@ int ramfs_create_file(const char *path, ramfs_node_t **out)
 }
 
 /*
- * 追加写：重新申请一块更大的内存、拷旧内容、接上新内容、释放旧的。
- * 这就是 Linux 里"文件数据在页缓存/块设备上增长"的最小版本 —— 内容真的变了，
- * 不是往某个缓冲区里一塞就算数。
+ * 追加写：重新申请一块更大的内存，拷旧内容、接上新内容、释放旧的。这就是 Linux 里"文件数据
+ * 在页缓存或块设备上增长"的最小版，内容真的变了，不是往某个缓冲区里一塞就算数。
  */
 int ramfs_node_append(ramfs_node_t *node, const uint8_t *buf, uint64_t len)
 {

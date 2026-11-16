@@ -1,13 +1,6 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    shell/cmd_fd.c
- * Version: 1.0
- * Brief:   M9 `fd` 命令：按路径装载 /bin/fddemo.elf，用户态自己 open/read/close。
- *
- * 与 M8 的 `elf exec` 一样，程序不是内核里的 blob，而是 ramfs 里的文件；
- * 但这一次**读文件的人变成了用户程序自己**：内核只提供 open/read/close 三个门，
- * 把 fd 表和读偏移维护在 TCB 里。
- * ============================================================================ */
+/* cmd_fd.c - M9 的 fd 命令：按路径装 /bin/fddemo.elf，让用户态自己 open/read/close。
+ * 跟 M8 的 elf exec 一样，程序是 ramfs 里的文件；不同的是这次读文件的人换成了用户程序自己，
+ * 内核只留 open/read/close 三道门，fd 表和读偏移挂在 TCB 里。 */
 
 #include "cmd_fd.h"
 

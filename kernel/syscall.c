@@ -1,10 +1,4 @@
-/* ============================================================================
- * zh_OS 1.0 (x86_64)
- * File:    kernel/syscall.c
- * Version: 1.0
- * Brief:   M2 系统调用：int 0x80 门（DPL=3）、分发器、copy_from_user 校验，
- *          以及"ring3 借内核打印 -> sys_exit 交还控制权"的整条验收路径。
- * ============================================================================ */
+/* syscall.c - int 0x80 门（DPL=3）、调用号分发、copy_from_user 校验 */
 
 #include "syscall.h"
 
@@ -23,23 +17,16 @@
 #include "../fs/file.h"    /* [ADD] M9：每进程 fd 表 */
 
 /*
- * M2 的设计取舍
- * -------------
- * 1) 复用 M1 的 2MB 用户窗口：M1 已经把它独占成一个 2MB 大页、把 U/S 置好了。
- *    M2 不再新占 2MB，直接往同一块窗口里重铺程序（偏移 0x000 放代码、
- *    0x200 放字符串、0x300 放结果槽）。跑完 `ring3` 再跑 `syscall` 也互不干扰，
- *    因为两边每次运行都会重新铺自己的机器码。
- *
- * 2) 门属性 0xEE 而不是 0x8E：DPL=3 才允许 ring3 用 int 0x80 触发这个门。
- *    用 0x8E（DPL=0）的话，ring3 一 int 0x80 就是 #GP —— 这是"系统调用怎么都
- *    不生效"最常见的原因。
- *
- * 3) 中断门（type 0xE）而不是陷门（0xF）：进入时 CPU 自动清 IF，内核处理期间
- *    不会被同级中断打断；iretq 会按帧里的 RFLAGS 把 IF 还原。
- *
- * 4) 所有指针参数都过 copy_from_user：ring3 递进来的地址必须落在自己的窗口里。
- *    不校验的话，用户态只要递一个内核地址过来，内核就会替它读内核内存
- *    （甚至代它打印一段内核数据）—— 这就是最朴素的提权漏洞。
+ * M2 的几处取舍。
+ * 用户窗口直接复用 M1 那块 2MB 大页（U/S 已经置好），不再新占：同一个窗口里重新铺程序，
+ * 偏移 0x000 放代码、0x200 放字符串、0x300 放结果槽。所以 ring3 和 syscall 两条命令
+ * 先后跑也不打架，各自每次都会铺自己的机器码。
+ * 门属性写 0xEE 不写 0x8E：DPL=3 才允许 ring3 用 int 0x80 触发这个门；写成 0x8E（DPL=0）
+ * 的话 ring3 一 int 0x80 就 #GP，这是系统调用怎么都不生效最常见的原因。
+ * 用中断门（type 0xE）不用陷门（0xF）：进来时 CPU 自动清 IF，处理期间不会被同级中断打断，
+ * iretq 再按帧里的 RFLAGS 把 IF 还原。
+ * 指针参数统统过 copy_from_user：ring3 递进来的地址必须落在自己的窗口里。不校验的话，
+ * 用户态递个内核地址过来，内核就替它读内核内存，甚至代它打印一段内核数据。
  */
 
 #define USER_WINDOW_BYTES (2u * 1024u * 1024u)  /* 与 M1 的 2MB 用户窗口一致 */
@@ -54,10 +41,9 @@ extern uint64_t isr128[];
 
 static uint8_t *g_win;   /* 用户窗口基址 */
 
-/* [ADD] M7：sys_write 的"[kernel] sys_write: N bytes delivered"这行日志。
- * M6 的 elf 命令靠它证明 copy_from_user 真的把用户的 .rodata 读进来了，所以默认开；
- * 但 forkdemo 一次会打十几行，每行都配一条内核日志就把 25 行的屏幕彻底刷没了，
- * 于是给它一个显式开关。 */
+/* [ADD] M7：sys_write 那行 "[kernel] sys_write: N bytes delivered" 的开关。
+ * M6 的 elf 命令靠它证明 copy_from_user 真把用户的 .rodata 读进来了，所以默认开；
+ * 但 forkdemo 一次打十几行，每行再配一条内核日志，25 行屏幕就没了。 */
 static int g_write_log = 1;
 
 /* [ADD] M8：exec 把文件内容读进这块内核缓冲区再交给装载器。
@@ -65,16 +51,14 @@ static int g_write_log = 1;
 #define SYS_EXEC_MAX_BYTES (64u * 1024u)
 static uint8_t g_exec_buf[SYS_EXEC_MAX_BYTES];
 
-/* [ADD] M11：exec 的 argv —— 最多 8 个参数、每个最长 96 字节，读进内核后再交给装载器 */
+/* [ADD] M11：exec 的 argv ， 最多 8 个参数、每个最长 96 字节，读进内核后再交给装载器 */
 #define SYS_EXEC_MAX_ARGS 8u
 #define SYS_EXEC_ARG_MAX  96u
 static char g_exec_args[SYS_EXEC_MAX_ARGS][SYS_EXEC_ARG_MAX + 1u];
 static char *g_exec_argv[SYS_EXEC_MAX_ARGS];
 static uint32_t g_pos;   /* 机器码写指针 */
 
-/* ------------------------------------------------------------------ */
 /* 机器码拼装（不引汇编器，直接往窗口里铺字节）                       */
-/* ------------------------------------------------------------------ */
 
 static void put8(uint8_t byte)
 {
@@ -128,13 +112,13 @@ static void emit_store_eax(uint8_t disp)
 }
 
 /*
- * 用户程序（按顺序）：
- *   1) sys_write(msg, len)                    合法调用：内核代它打印一行
- *   2) sys_ticks()                            证明返回值真的能带回 ring3
- *   3) sys_cpl()                              证明这次调用确实来自 ring3
- *   4) sys_write(0x100000, 8)                 非法调用：内核指针，必须被拒
- *   5) sys_exit(0)                            交还控制权，回到 Shell
- * 每次调用的返回值写进 res[0..3]，回到内核后由内核检查。
+ * 用户程序按顺序做五件事：
+ *   1) sys_write(msg, len)       合法调用，内核代它打一行
+ *   2) sys_ticks()               看返回值能不能带回 ring3
+ *   3) sys_cpl()                 看这次调用是不是真来自 ring3
+ *   4) sys_write(0x100000, 8)    非法调用，内核指针，必须被拒
+ *   5) sys_exit(0)               交还控制权，回 Shell
+ * 每次的返回值写进 res[0..3]，回到内核后由内核检查。
  */
 static void build_program(uint32_t msg_addr, uint32_t msg_len, uint32_t res_addr)
 {
@@ -177,9 +161,7 @@ static void build_program(uint32_t msg_addr, uint32_t msg_len, uint32_t res_addr
     emit_int80();
 }
 
-/* ------------------------------------------------------------------ */
 /* 页表：让这块 2MB 用户窗口对 ring3 可读写                           */
-/* ------------------------------------------------------------------ */
 
 static void allow_user_window(void)
 {
@@ -202,15 +184,12 @@ static void allow_user_window(void)
     __asm__ volatile("mov %0, %%cr3" : : "r"(cr3) : "memory");
 }
 
-/* ------------------------------------------------------------------ */
 /* 内核侧：参数校验                                                   */
-/* ------------------------------------------------------------------ */
 
 /*
- * copy_from_user 的地址校验（M2 版）。
- * 真正的内核会走页表逐级检查 U/S 位；M2 阶段用户空间只有这一块 2MB 窗口，
- * 所以"指针对是否落在窗口内 + 长度不越界 + 不回绕"就已经是完整判据。
- * M3 换成 4KB 页表和独立地址空间后，这里应该升级成 walk_page_table()。
+ * copy_from_user 的地址校验（M2 版）。正经内核会走页表逐级查 U/S 位；M2 阶段用户空间
+ * 只有这一块 2MB 窗口，所以"指针对是否落在窗口内 + 长度不越界 + 不回绕"就是完整判据。
+ * M3 换成 4KB 页表和独立地址空间之后，这里应该升级成 walk_page_table()。
  */
 static int user_ptr_ok(uint64_t ptr, uint64_t len)
 {
@@ -219,9 +198,9 @@ static int user_ptr_ok(uint64_t ptr, uint64_t len)
     uint64_t span;
 
     if (task_sched_active()) {
-        /* [M5] 独立地址空间：用户传进来的指针是**虚拟地址**，窗口基点由 TCB 决定，
-         * 且窗口只有 VMM_USER_SPAN 大。注意内核此刻正运行在该任务的 CR3 上，
-         * 所以 ptr 直接解引用就是对的（页表替我们做地址翻译）。 */
+        /* [M5] 有了独立地址空间，用户递进来的指针就是虚拟地址，窗口基点由 TCB 决定，
+         * 而且窗口只有 VMM_USER_SPAN 大。内核此刻正运行在该任务的 CR3 上，
+         * ptr 直接解引用就对，地址翻译交给页表。 */
         base = task_user_window_current();
         span = VMM_USER_SPAN;
         if (base == 0u) {
@@ -249,9 +228,7 @@ static int user_ptr_ok(uint64_t ptr, uint64_t len)
     return 1;
 }
 
-/* ------------------------------------------------------------------ */
 /* 具体系统调用                                                       */
-/* ------------------------------------------------------------------ */
 
 static uint64_t sys_write(uint64_t ptr, uint64_t len)
 {
@@ -289,13 +266,11 @@ static uint64_t sys_cpl(uint64_t cs)
 static int copy_path_from_user(uint64_t ptr, char *dst, uint32_t cap);
 
 /*
- * [ADD] M13：读一个键。
- * 这是"shell 降到 ring3"的关键一条 —— 以前键盘是内核里的 read_line() 直接拿的，
- * 用户态根本碰不到；现在 shell 只能靠这个调用一个字符一个字符地取。
- *
- * 语义按原样返回（不阻塞）：缓冲区空就返回 0，用户态自己决定要不要 sleep 一下
- * 再问一次。为什么不做成阻塞的？因为内核里阻塞要挂起当前任务、醒来还要有人唤醒，
- * 那是信号量与等待队列的活；这一步先让用户态自己轮询，语义照样正确（只是更笨）。
+ * [ADD] M13：读一个键。这是 shell 降到 ring3 的关键一条：以前键盘是内核里的
+ * read_line() 直接拿的，用户态碰不到，现在 shell 只能靠这个调用一个字符一个字符地取。
+ * 语义不阻塞，缓冲区空就返回 0，用户态自己决定要不要 sleep 一下再问。
+ * 不做成阻塞的，是因为内核里阻塞要挂起任务、还要有人唤醒，那是信号量和等待队列的活；
+ * 这一步先让用户态轮询，语义照样对，只是笨一点。
  */
 static uint64_t sys_readkey(void)
 {
@@ -309,10 +284,10 @@ static uint64_t sys_readkey(void)
     return (uint64_t)(uint8_t)keyboard_getchar();
 }
 
-/* [ADD] M14：按序号枚举目录条目 —— 用户态 ls 的全部信息来源 */
+/* [ADD] M14：按序号枚举目录条目 ， 用户态 ls 的全部信息来源 */
 static uint64_t sys_readdir(uint64_t path_ptr, uint64_t index, uint64_t buf_ptr)
 {
-    /* 本 ABI 只有三个参数位（rdi/rsi/rdx），所以名字缓冲长度就固定 64 —— 
+    /* 本 ABI 只有三个参数位（rdi/rsi/rdx），所以名字缓冲长度就固定 64 ，
      * 和 ramfs_node_t.name 的容量一致，刚好够用。 */
     const uint64_t cap = 64u;
     char path[128];
@@ -375,7 +350,7 @@ static uint64_t sys_getcwd(uint64_t buf_ptr, uint64_t maxlen)
 }
 
 // [ADD] M4：单个字符输出。和 sys_write 的区别是它不打"[kernel] sys_write: ..."
-//        那一行日志 —— 任务每秒要打几十个字符，走日志会把屏幕刷爆。
+//        那一行日志 ， 任务每秒要打几十个字符，走日志会把屏幕刷爆。
 static uint64_t sys_putc(uint64_t ch)
 {
     const char c = (char)(uint8_t)ch;
@@ -391,13 +366,11 @@ static uint64_t sys_putc(uint64_t ch)
 }
 
 /*
- * [ADD] M4：睡若干个 tick。
- * 为什么用 cli 之后的 sti + hlt，而不是空转：
- *   空转会白占 CPU（时间片照样被烧完，但屏幕上什么也不发生，看起来像卡死）；
- *   hlt 让 CPU 真正停下，等到下一个中断才醒。醒来时可能已经是另一个任务在跑，
- *   到它自己再被换上时，iretq 会回到这条 hlt 循环里继续 —— 因为它的整个现场
- *   （包括这条循环的 rsp 和 rip）都被 sched_tick 存进 TCB 了。
- * 注意：中断门进来时 IF=0，所以这里必须先显式 sti，否则 hlt 永远等不到中断。
+ * [ADD] M4：睡若干个 tick。用 cli 之后的 sti + hlt，不空转：空转会白烧时间片，
+ * 屏幕上什么也不发生，看着像卡死；hlt 让 CPU 真停下，等下一个中断才醒。
+ * 醒来时可能已经是别的任务在跑，等它自己再被换上，iretq 回到这条 hlt 循环继续，
+ * 因为整份现场（含 rsp 和 rip）都被 sched_tick 存进 TCB 了。
+ * 中断门进来时 IF=0，所以这里得先显式 sti，否则 hlt 等不到中断。
  */
 static uint64_t sys_sleep(uint64_t ticks)
 {
@@ -410,14 +383,11 @@ static uint64_t sys_sleep(uint64_t ticks)
     return ticks;
 }
 
-/* ------------------------------------------------------------------ */
 /* [M8] exec：按路径打开 ELF，把当前进程的映像换掉                       */
-/* ------------------------------------------------------------------ */
 
 /*
- * 与 Linux 的 execve 相比这里少了什么：没有参数（argv/envp）、没有 fd 继承、
- * 没有权限位检查、没有 PT_INTERP。但"按路径打开文件 -> 装载 -> 原地换映像 ->
- * 同一个 pid 继续跑新程序"这条主线是完整的。
+ * 跟 Linux 的 execve 比少了参数（argv/envp）、fd 继承、权限位检查、PT_INTERP。
+ * 但"按路径打开文件、装载、原地换映像、同一个 pid 继续跑新程序"这条主线是全的。
  */
 static uint64_t sys_exec(struct regs *r, uint64_t path_ptr, uint64_t argv_ptr,
                             uint64_t argc)
@@ -497,9 +467,7 @@ static uint64_t sys_exec(struct regs *r, uint64_t path_ptr, uint64_t argv_ptr,
     return 0u;
 }
 
-/* ------------------------------------------------------------------ */
 /* [M9] open / read / close：用户态第一次自己读写文件                    */
-/* ------------------------------------------------------------------ */
 
 #define SYS_READ_MAX_BYTES 4096u
 
@@ -588,9 +556,7 @@ static uint64_t sys_close(uint64_t fd_arg)
     return (file_close(tab, ZH_MAX_FDS, (int)fd_arg) == 0) ? 0u : (uint64_t)-1;
 }
 
-/* ------------------------------------------------------------------ */
 /* [M10] creat / write / unlink：让文件真正可写                          */
-/* ------------------------------------------------------------------ */
 
 #define SYS_WRITE_FILE_MAX 4096u
 
@@ -688,9 +654,7 @@ static uint64_t sys_unlink(uint64_t path_ptr)
     return 0u;
 }
 
-/* ------------------------------------------------------------------ */
 /* 分发                                                               */
-/* ------------------------------------------------------------------ */
 
 void syscall_dispatch(struct regs *r)
 {
@@ -728,7 +692,7 @@ void syscall_dispatch(struct regs *r)
     case ZH_SYS_FORK: {
         const int pid = task_fork_current(r);
         /* 父进程的返回值就是子进程 pid；子进程的帧已经被复制成 rax=0，它从这里
-         * iretq 出去时看到的就是 0 —— 和 Linux 的 fork 语义一致。 */
+         * iretq 出去时看到的就是 0 ， 和 Linux 的 fork 语义一致。 */
         r->rax = (pid < 0) ? (uint64_t)-1 : (uint64_t)(uint32_t)pid;
         return;
     }
@@ -828,9 +792,7 @@ void syscall_dispatch(struct regs *r)
     }
 }
 
-/* ------------------------------------------------------------------ */
 /* 注册                                                               */
-/* ------------------------------------------------------------------ */
 
 void syscall_set_write_log(int on)
 {
@@ -838,10 +800,10 @@ void syscall_set_write_log(int on)
 }
 
 /*
- * [ADD] M17：把一个 pid 标成前台进程。
- * 为什么需要它：Ctrl-C 是内核在键盘中断里收到的，内核并不知道"现在用户在等谁"。
- * Linux 用进程组 + 控制终端（tcgetpgrp）来解决，本版的等价物就是这一位标记：
- * zhsh3 在 fork 拿到子 pid 之后、readkey 等它退出之前，把子进程标成前台。
+ * [ADD] M17：把一个 pid 标成前台进程。需要它的原因是 Ctrl-C 由内核在键盘中断里收到，
+ * 内核并不知道用户此刻在等谁。Linux 用进程组加控制终端（tcgetpgrp）解决，
+ * 这里的等价物就是这一位：zhsh3 在 fork 拿到子 pid 之后、readkey 等它退出之前，
+ * 把子进程标成前台。
  */
 void syscall_mark_foreground(int pid)
 {
@@ -855,8 +817,8 @@ void syscall_mark_foreground(int pid)
 void syscall_init(void)
 {
     /*
-     * 0xEE = P=1 | DPL=3 | type=1110（64 位中断门）。
-     * 这里不能用 idt.h 的 IDT_GATE_INTERRUPT（0x8E），那是 DPL=0。
+     * 0xEE = P=1 | DPL=3 | type=1110，64 位中断门。不能用 idt.h 的
+     * IDT_GATE_INTERRUPT（0x8E），那是 DPL=0。
      */
     idt_set_gate((uint8_t)ZH_SYSCALL_VECTOR,
                  (uint64_t)(uintptr_t)isr128, 0, 0xEEu);
@@ -864,9 +826,7 @@ void syscall_init(void)
     vga_print("syscall: int 0x80 gate installed (DPL=3)\n", VGA_LIGHT_GREY, VGA_BLACK);
 }
 
-/* ------------------------------------------------------------------ */
 /* 自检主流程：`syscall` 命令                                          */
-/* ------------------------------------------------------------------ */
 
 static void put_hex64(uint64_t value)
 {
@@ -903,7 +863,7 @@ void syscall_self_test(void)
         return;
     }
 
-    /* ---- 1) 铺字符串 ---- */
+    /* 1) 铺字符串 */
     msg_len = (uint32_t)(sizeof(message) - 1u);
     if (msg_len > USER_MSG_MAX) {
         err("syscall: message too long");
@@ -913,7 +873,7 @@ void syscall_self_test(void)
         g_win[msg_off + i] = (uint8_t)message[i];
     }
 
-    /* ---- 2) 铺机器码 ---- */
+    /* 2) 铺机器码 */
     msg_addr = (uint32_t)(uintptr_t)(g_win + msg_off);
     res_addr = (uint32_t)(uintptr_t)(g_win + res_off);
     build_program(msg_addr, msg_len, res_addr);
@@ -923,11 +883,11 @@ void syscall_self_test(void)
         *((volatile uint32_t *)(uintptr_t)(g_win + res_off + 4u * i)) = 0u;
     }
 
-    /* ---- 3) 页表 + TSS.RSP0 ---- */
+    /* 3) 页表 + TSS.RSP0 */
     allow_user_window();
     tss_set_rsp0(tss_kernel_stack_top());
 
-    /* ---- 4) 交代现场 ---- */
+    /* 4) 交代现场 */
     info("int 0x80 syscall self-test (M2):");
     plain("  ABI       : rax=number, rdi/rsi=args, return in rax");
     sh_print(SH_PLAIN, "  user code : ");
@@ -941,13 +901,13 @@ void syscall_self_test(void)
     warn("now dropping to ring 3: the next line is printed by the KERNEL");
     plain("   on behalf of ring 3 -> that is sys_write working.");
 
-    /* ---- 5) 走 ---- */
+    /* 5) 走 */
     usermode_enter((uint64_t)(uintptr_t)g_win,
                    (uint64_t)(uintptr_t)(g_win + USER_WINDOW_BYTES - 16u),
                    0x202u,
                    GDT_USER_CODE_RPL3, GDT_USER_DATA_RPL3);
 
-    /* ---- 6) 这一行以下 = sys_exit 把 CPU 送回内核之后 ---- */
+    /* 6) 这一行以下 = sys_exit 把 CPU 送回内核之后 */
     ok("back in ring 0: sys_exit handed control back (no panic)");
 
     res = (volatile uint32_t *)(uintptr_t)(g_win + res_off);

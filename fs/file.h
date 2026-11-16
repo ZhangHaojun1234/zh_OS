@@ -1,15 +1,7 @@
-/* ============================================================================
- * zh_OS 0.2beta (x86_64)
- * File:    fs/file.h
- * Version: 0.2beta
- * Brief:   M9 文件描述符表：每进程一张，open/read/close 的最小实现。
- *
- * Linux 里 fd 只是一个整数下标，真正的对象在进程的 files_struct 里：
- *   fd  --> struct file --> inode
- * 这里把"struct file"简化成一个 zfile_t：{ 用了没、指向哪个 ramfs 节点、读到哪了 }，
- * 每进程一张 ZH_MAX_FDS 项的表。于是 open 返回的是**下标**，这与 Linux 完全一致
- * （也是为什么 fd 总是 0、1、2 这种小整数，而不是指针）。
- * ============================================================================ */
+/* file.h - M9 的每进程 fd 表，open/read/close 的最小实现。
+ * Linux 里 fd 只是下标：fd -> struct file -> inode。这里把 struct file 缩成 zfile_t
+ * { 用了没、指向哪个 ramfs 节点、读到哪了 }，每进程一张 ZH_MAX_FDS 项的表，open 返回下标 ，
+ * 这也是为什么 fd 总是 0、1、2 这种小整数。 */
 
 #ifndef ZH_OS_FILE_H
 #define ZH_OS_FILE_H

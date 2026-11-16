@@ -1,29 +1,11 @@
-/* ============================================================================
- * zh_OS 0.2beta (x86_64)
- * File:    user/zhsh.c
- * Version: 0.2beta
- * Brief:   M13：**运行在 ring 3 的 shell**（/bin/zhsh3.elf）。
- *
- * 为什么这是"最像 Linux"的一步
- * ---------------------------
- * M12 之前，shell 是内核里的一个循环 + 一张函数表：它自己就在 ring 0，命令
- * 是内核函数，"用户敲一条命令"其实什么都没发生 —— 没有进程、没有特权切换。
- *
- * 这个程序之后不一样了。它跑在 ring 3，能碰的东西只有这几样：
- *
- *   SYS_READKEY  —— 一个字符一个字符地取键盘（内核不再替它读整行）
- *   SYS_PUTC     —— 往屏幕吐一个字符（包括提示符）
- *   SYS_FORK     —— 复制一个进程
- *   SYS_EXEC     —— 把子进程换成 /bin/<命令>.elf，并把 argv 交过去
- *   SYS_WAIT     —— 等子进程退出，拿退出码
- *   SYS_CHDIR / SYS_GETCWD —— 目录
- *
- * 也就是说：它执行一条外部命令时，走的是**和 Linux 一模一样的路径**
- * （fork → exec → wait），而不是"调用一个内核函数"。少一个系统调用它就活不下去。
- *
- * 内置命令（help / exit / pwd / cd / echo）由它自己实现，这也是 Linux 的分法：
- * 少数命令在 shell 进程里跑（builtin），其余全是独立进程。
- * ============================================================================ */
+/* zhsh3.c - M13：跑在 ring 3 的 shell（/bin/zhsh3.elf），这一步最像 Linux。
+ * M12 之前，shell 是内核里的一个循环加一张函数表，它自己就在 ring0，命令是内核函数，
+ * 用户敲一条命令其实什么都没发生 ， 没有进程，也没有特权切换。
+ * 这个程序跑在 ring3，能碰的只有几个系统调用：SYS_READKEY（一个字符一个字符取键盘，内核不再替它读整行）、
+ * SYS_PUTC、SYS_FORK、SYS_EXEC、SYS_WAIT、SYS_CHDIR / SYS_GETCWD。
+ * 它执行一条外部命令走的是 fork -> exec -> wait，跟 Linux 一模一样，少一个系统调用它就活不下去。
+ * help / exit / pwd / cd / echo 这类 builtin 由它自己实现，这也是 Linux 的分法：
+ * 少数命令在 shell 进程里跑，其余全是独立进程。 */
 
 typedef unsigned long u64;
 typedef unsigned int u32;
@@ -41,7 +23,7 @@ typedef unsigned int u32;
 #define ZH_SYS_GETCWD  19ul
 #define ZH_SYS_WAITPID 21ul   /* [ADD] M17 */
 #define ZH_SYS_SETFG   23ul   /* [ADD] M17 */
-/* ---- [ADD] M18：作业控制 ---- */
+/* [ADD] M18：作业控制 */
 #define ZH_SYS_SIGNAL  24ul   /* signal(sig, handler) */
 #define ZH_SYS_KILL    22ul   /* [ADD] M18：用来发 SIGCONT */
 #define ZH_SYS_GETSTATE 26ul  /* 查任务状态（0 FREE 1 READY 2 RUNNING 3 DEAD 4 WAIT 5 STOP） */
@@ -76,7 +58,7 @@ static u64 sys_call(u64 nr, u64 a1, u64 a2, u64 a3)
     return ret;
 }
 
-/* ---------------- 输出：一字符、一行 ---------------- */
+/* 输出：一字符、一行 */
 
 static void putc1(char c)
 {
@@ -109,7 +91,7 @@ static void print_u64(u64 value)
     }
 }
 
-/* ---------------- 字符串工具 ---------------- */
+/* 字符串工具 */
 
 static int seq(const char *a, const char *b)
 {
@@ -124,7 +106,7 @@ static int seq(const char *a, const char *b)
     return (a[i] == '\0' && b[i] == '\0') ? 1 : 0;
 }
 
-/* ---------------- 读一行：一个键一个键地取 ---------------- */
+/* 读一行：一个键一个键地取 */
 
 #define LINE_MAX 96u
 
@@ -132,7 +114,7 @@ static char g_line[LINE_MAX + 1u];
 
 /*
  * 取一行。屏幕上已经有提示符（调用者打的），这里只负责回显与编辑。
- * 缓冲区空的时候不忙等：sleep 1 tick（10ms）再问，把 CPU 让给别的任务 ——
+ * 缓冲区空的时候不忙等：sleep 1 tick（10ms）再问，把 CPU 让给别的任务 ，
  * 这正是 Linux shell 在 read(0) 上阻塞时内核替它干的事，只是这里由我们自己轮询。
  */
 static u32 read_line(void)
@@ -168,7 +150,7 @@ static u32 read_line(void)
     }
 }
 
-/* ---------------- 拆成 argv（就地切空格） ---------------- */
+/* 拆成 argv（就地切空格） */
 
 #define ARG_MAX 8u
 
@@ -198,7 +180,7 @@ static u32 split_args(void)
     return n;
 }
 
-/* ---------------- 外部命令：fork -> exec -> wait ---------------- */
+/* 外部命令：fork -> exec -> wait */
 
 #define PATH_MAX 64u
 
@@ -217,7 +199,7 @@ static void build_path(const char *name)
         g_path[i] = '\0';
         return;
     }
-    /* 不带路径：找 /bin/<name>.elf —— 本版的"PATH 搜索"就这一行 */
+    /* 不带路径：找 /bin/<name>.elf ， 本版的"PATH 搜索"就这一行 */
     g_path[0] = '/';
     g_path[1] = 'b';
     g_path[2] = 'i';
@@ -238,13 +220,11 @@ static void build_path(const char *name)
 /*
  * 执行一条外部命令。返回子进程的退出码。
  * 这一段就是"ring3 shell 执行一条命令"的全部内核动作，一眼能看完：
- *   fork()                —— 复制一个我自己
- *   (子) exec(path, argv)  —— 把自己换成那个程序（argv 从 M11 起能带过去）
- *   (父) wait()            —— 等它退出、拿退出码
+ *   fork()                ， 复制一个我自己
+ *   (子) exec(path, argv)  ， 把自己换成那个程序（argv 从 M11 起能带过去）
+ *   (父) wait()            ， 等它退出、拿退出码
  */
-/* ====================================================================== */
 /* [ADD] M18：作业表（shell 自己维护，内核只提供 pid 上的状态）            */
-/* ====================================================================== */
 
 #define JOB_MAX      4u
 #define JOB_FREE     0u
@@ -462,7 +442,7 @@ static void cmd_bg(u32 argc)
  * [ADD] M18 的改动只有三处：
  *   1) fork 之后先登记进作业表（这样 ^Z 停住它以后 jobs 能把它列出来）；
  *   2) waitpid 多传一个 WUNTRACED：被停住也算"有状态变化"，不会死等到底；
- *   3) 拿回 0x10000|sig 时说明它被 ^Z 停住了：打印 Stopped，进程**留在内存里**。
+ *   3) 拿回 0x10000|sig 时说明它被 ^Z 停住了：打印 Stopped，进程留在内存里。
  */
 static u64 run_command(u32 argc)
 {
@@ -490,14 +470,14 @@ static u64 run_command(u32 argc)
     /*
      * [ADD] M17：把刚 fork 出来的子进程标成"前台"。
      * 内核在键盘中断里收到 Ctrl-C 时，只知道"有人按了 Ctrl-C"，
-     * 不知道该送给谁 —— 这一句就是它的答案。
+     * 不知道该送给谁 ， 这一句就是它的答案。
      * （Linux 用进程组 + 控制终端的 tcsetpgrp 做同一件事。）
      */
     slot = job_add((u32)pid, g_argv[0]);          /* [ADD] M18 */
 
     code = wait_foreground((u32)pid);             /* [ADD] M18：内含 SETFG / WAITPID / SETFG(-1) */
 
-    /* [ADD] M18：^Z 停住 —— 退出码不是重点，重点是它还在内存里 */
+    /* [ADD] M18：^Z 停住 ， 退出码不是重点，重点是它还在内存里 */
     if ((code & ZH_WSTOPPED) != 0u && code != (u64)-1) {
         if (slot != 0u) {
             g_jobs[slot - 1u].state = JOB_STOPPED;
@@ -536,7 +516,7 @@ static u64 run_command(u32 argc)
     return code;
 }
 
-/* ---------------- 提示符 ---------------- */
+/* 提示符 */
 
 static void prompt(void)
 {
@@ -573,7 +553,7 @@ static void print_help(void)
     puts1("  (a bare name means /bin/<name>.elf; a leading / means that exact path)\n");
 }
 
-/* ---------------- main ---------------- */
+/* main */
 
 void _start(unsigned long argc, char **argv)
 {

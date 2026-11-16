@@ -1,19 +1,8 @@
-/* ============================================================================
- * zh_OS 0.2beta (x86_64)
- * File:    user/spawndemo.c
- * Version: 0.2beta
- * Brief:   M10 演示（进程半）：fork -> 子进程 exec -> 父进程 wait，一条闭环。
- *
+/* spawndemo.c - M10 演示（进程半）：fork -> 子进程 exec -> 父进程 wait，一条闭环。
  * 这就是 Linux 里 shell 执行一条外部命令的全部内核动作：
- *   pid = fork();
- *   if (pid == 0) { exec("/bin/xxx"); }   // 子进程变成新程序
- *   else          { wait(&code); }        // 父进程等它结束
- * 屏幕上要能看到三件事：
- *   - fork 返回两个不同的值（父 >0，子 ==0）；
- *   - 子进程 exec 之后变成 hello，并且**这个 pid 里跑的是新映像**；
- *   - 父进程被 wait 唤醒并拿到 42（hello 的退出码），说明收尸成功。
- * 全过 exit(0)，否则 exit(9)。
- * ============================================================================ */
+ * pid = fork(); 子进程 exec("/bin/xxx"); 父进程 wait(&code)。
+ * 屏幕上要看到三件事：fork 返回两个不同的值；子进程 exec 之后变成 hello 而 pid 里跑的是新映像；
+ * 父进程被 wait 唤醒并拿回 42（hello 的退出码）。全过 exit(0)，否则 exit(9)。 */
 
 typedef unsigned long u64;
 
@@ -89,7 +78,7 @@ void _start(void)
     pid = sys_call(ZH_SYS_FORK, 0u, 0u, 0u);
 
     if (pid == 0u) {
-        /* ---- 子进程：exec 成 hello ---- */
+        /* 子进程：exec 成 hello */
         u64 me = sys_call(ZH_SYS_GETPID, 0u, 0u, 0u);
 
         print_str("[child ] fork returned 0, I am pid ");
@@ -100,7 +89,7 @@ void _start(void)
         sys_call(ZH_SYS_EXIT, 9u, 0u, 0u);
     }
 
-    /* ---- 父进程：等子进程收尸 ---- */
+    /* 父进程：等子进程收尸 */
     print_str("[parent] fork returned child pid ");
     print_u64(pid);
     print_str("\n");

@@ -1,9 +1,4 @@
-/* ============================================================================
- * zh_OS 0.2beta (x86_64)
- * File:    shell/shell.h
- * Version: 0.2beta
- * Brief:   输出级别与宏、命令表类型、Shell 接口声明。
- * ============================================================================ */
+/* shell.h - 输出级别与宏、命令表类型、Shell 接口声明 */
 
 #ifndef ZH_OS_SHELL_H
 #define ZH_OS_SHELL_H
@@ -11,18 +6,13 @@
 #include <stdint.h>
 
 /*
- * 第 5 步：Shell 主循环与统一输出接口。
- *
- * 设计要点：
- *   - freestanding 环境没有 libc，命令表是一块静态 const 数组，
- *     每个命令的签名统一为 int fn(int argc, char **argv)。
- *   - 提示符 [user@zh_OS ~]$ / # 由 shell_print_prompt() 分段上色打印，
- *     随后 read_line("") 传空提示（第 3 步的 read_line 会把 prompt 固定染成青色，
- *     不能用来画多色提示符），输入本身仍由 read_line 逐字符回显。
- *   - read_line() / read_password() 共用一块静态缓冲，shell_run() 拿到输入后
- *     必须立刻拷进局部数组再做切分，否则下一次输入会覆盖上一次的结果。
- *   - 命令返回 SHELL_LOGOUT 时 shell_run() 返回，由 kernel_main 重新调用
- *     login_screen()；其余情况继续循环。
+ * 第 5 步：Shell 主循环和统一输出接口。freestanding 环境没有 libc，命令表是一块静态 const
+ * 数组，每个命令签名统一为 int fn(int argc, char argv)。提示符 [user@zh_OS ~]$ 或 # 由
+ * shell_print_prompt() 分段上色打印，然后用 read_line("") 传空提示，第 3 步那个 read_line
+ * 会把 prompt 固定染成青色，画不了多色提示符，输入本身还是 read_line 逐字符回显。
+ * read_line() / read_password() 共用一块静态缓冲，shell_run() 拿到输入必须立刻拷进局部数组
+ * 再切分，否则下一次输入会覆盖上一次的结果。命令返回 SHELL_LOGOUT 时 shell_run() 返回，
+ * 由 kernel_main 重新调 login_screen()，其余情况继续循环。
  */
 
 #define SHELL_LINE_MAX  128u
