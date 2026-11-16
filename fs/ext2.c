@@ -1,7 +1,7 @@
 /* ============================================================================
- * zh_OS 0.2beta (x86_64)
+ * zh_OS 1.0 (x86_64)
  * File:    fs/ext2.c
- * Version: 0.2beta
+ * Version: 1.0
  * Brief:   ext2 只读实现：超级块 -> 块组描述符 -> inode 表 -> inode -> 目录项
  *          -> 数据块（直接块 / 一级间接 / 二级间接）。读 ATA 主通道「主设备」
  *          （QEMU -drive if=ide,index=0）。
@@ -589,8 +589,10 @@ static uint32_t copy_from_pointer_block(uint32_t ptr_block, uint32_t level,
         if (written >= cap) {
             break;
         }
-        if (level == 2u) {
-            written = copy_from_pointer_block(child, 1u, buf, cap, written);
+        /* [ADD] M28：把"只认两层"改成"有几层认几层"。
+         * level=3 是三级间接（i_block[14]），里面每一项还指向一个二级指针块。 */
+        if (level > 1u) {
+            written = copy_from_pointer_block(child, level - 1u, buf, cap, written);
             continue;
         }
         if (read_block_to(child, g_block_buf2) != EXT2_OK) {
@@ -657,6 +659,10 @@ int ext2_read(const char *path, uint8_t *buf, uint64_t maxlen, uint64_t *outlen)
     /* 3) 二级间接（i_block[13]） */
     if (written < want) {
         written = copy_from_pointer_block(f.block[13], 2u, buf, want, written);
+    }
+    /* [ADD] M28：四级指针树的最后一层 */
+    if (written < want) {
+        written = copy_from_pointer_block(f.block[14], 3u, buf, want, written);
     }
 
     if (outlen != (uint64_t *)0) {
@@ -1504,6 +1510,524 @@ int ext2_create_big(const char *path, const uint8_t *data, uint64_t len,
 }
 
 /* ==================================================================== */
+/* [ADD] M28：二级/三级间接块 —— 单文件冲破 268KB                        */
+/*                                                                    */
+/* M22 只给 i_block[12] 建了一个指针块，所以单文件上限是：              */
+/*   bs * (12 + bs/4) = 1024 * 268 = 268KB                            */
+/* 这里补上 ext2 的完整指针树（对应 Linux ext2_get_block 里的 add_branch）：*/
+/*   i_block[0..11]  直接块                                            */
+/*   i_block[12]     一级间接：指针块 -> 数据块              （256 项） */
+/*   i_block[13]     二级间接：指针块 -> 指针块 -> 数据块    （65536 项）*/
+/*   i_block[14]     三级间接：三层指针 -> 数据块        （16777216 项）*/
+/* 上限变成 1024*(12+256+65536+16777216) ≈ 16GB。                      */
+/*                                                                    */
+/* 写盘顺序固定在"先指针、后数据"：指针块里的槽位先落盘，再把内容写进  */
+/* 数据块。中途掉电最多留下一个指向全零块的指针，fsck 只会报"块没用满"，*/
+/* 而不会报"指针指到没分配的块"。                                     */
+/* ==================================================================== */
+
+/* free_* 系列定义在下面 M23 一节，这里先声明，回滚要用 */
+static int free_block(uint32_t blk);
+static int free_inode(uint32_t ino, int was_dir);
+static int free_ptr_tree(uint32_t ptr_blk, uint32_t level, uint32_t *count);
+
+static uint8_t g_map_l1[EXT2_INODE_TABLE_MAX];   /* 第一层指针块内容 */
+static uint8_t g_map_l2[EXT2_INODE_TABLE_MAX];   /* 第二层指针块内容 */
+static uint8_t g_map_l3[EXT2_INODE_TABLE_MAX];   /* 第三层指针块内容 */
+
+/* 分配一个全零指针块并立刻落盘 */
+static int map_alloc_ptr_block(uint32_t *out_blk)
+{
+    uint32_t i;
+    int rc;
+
+    rc = alloc_block(0u, out_blk);
+    if (rc != EXT2_OK) {
+        return rc;
+    }
+    for (i = 0u; i < g_block_size; ++i) {
+        g_wdata[i] = 0u;
+    }
+    if (ext2_write_block(*out_blk, g_wdata) != EXT2_OK) {
+        return EXT2_ERR_IO;
+    }
+    return EXT2_OK;
+}
+
+/* 逻辑块 -> 物理块，路径上缺哪一层就把哪一层补出来。
+ * raw 是 inode 的原始缓冲，函数会就地改 i_block[]（调用方最后统一写回 inode）。
+ * out_ptrs 累加这次新分配了几个指针块；out_i1/2/3 只在"新分配"时写出编号，
+ * 用来给命令打印"这次到底用到了哪几层"。 */
+static int ext2_map_add(uint8_t *raw, uint32_t lb, uint32_t *out_phys,
+                        uint32_t *out_ptrs, uint32_t *out_i1,
+                        uint32_t *out_i2, uint32_t *out_i3)
+{
+    uint32_t n = g_block_size / 4u;
+    uint32_t phys = 0u;
+    uint32_t b1 = rd32(raw + IN_BLOCKS + 12u * 4u);
+    uint32_t b2 = rd32(raw + IN_BLOCKS + 13u * 4u);
+    uint32_t b3 = rd32(raw + IN_BLOCKS + 14u * 4u);
+    uint32_t child;
+    int rc;
+
+    /* 1) 12 个直接块 */
+    if (lb < 12u) {
+        rc = alloc_block(0u, &phys);
+        if (rc != EXT2_OK) {
+            return rc;
+        }
+        wr32(raw + IN_BLOCKS + lb * 4u, phys);
+        *out_phys = phys;
+        return EXT2_OK;
+    }
+    lb -= 12u;
+
+    /* 2) 一级间接 */
+    if (lb < n) {
+        if (b1 == 0u) {
+            rc = map_alloc_ptr_block(&b1);
+            if (rc != EXT2_OK) {
+                return rc;
+            }
+            wr32(raw + IN_BLOCKS + 12u * 4u, b1);
+            ++(*out_ptrs);
+            if (out_i1 != (uint32_t *)0) {
+                *out_i1 = b1;
+            }
+        }
+        if (read_block_to(b1, g_map_l1) != EXT2_OK) {
+            return EXT2_ERR_IO;
+        }
+        rc = alloc_block(0u, &phys);
+        if (rc != EXT2_OK) {
+            return rc;
+        }
+        wr32(g_map_l1 + lb * 4u, phys);
+        if (ext2_write_block(b1, g_map_l1) != EXT2_OK) {
+            return EXT2_ERR_IO;
+        }
+        *out_phys = phys;
+        return EXT2_OK;
+    }
+    lb -= n;
+
+    /* 3) 二级间接：i_block[13] -> child -> 数据块 */
+    if (lb < n * n) {
+        uint32_t i1 = lb / n;
+        uint32_t i2 = lb % n;
+
+        if (b2 == 0u) {
+            rc = map_alloc_ptr_block(&b2);
+            if (rc != EXT2_OK) {
+                return rc;
+            }
+            wr32(raw + IN_BLOCKS + 13u * 4u, b2);
+            ++(*out_ptrs);
+            if (out_i2 != (uint32_t *)0) {
+                *out_i2 = b2;
+            }
+        }
+        if (read_block_to(b2, g_map_l1) != EXT2_OK) {
+            return EXT2_ERR_IO;
+        }
+        child = rd32(g_map_l1 + i1 * 4u);
+        if (child == 0u) {
+            rc = map_alloc_ptr_block(&child);
+            if (rc != EXT2_OK) {
+                return rc;
+            }
+            wr32(g_map_l1 + i1 * 4u, child);
+            if (ext2_write_block(b2, g_map_l1) != EXT2_OK) {
+                return EXT2_ERR_IO;
+            }
+            ++(*out_ptrs);
+        }
+        if (read_block_to(child, g_map_l2) != EXT2_OK) {
+            return EXT2_ERR_IO;
+        }
+        rc = alloc_block(0u, &phys);
+        if (rc != EXT2_OK) {
+            return rc;
+        }
+        wr32(g_map_l2 + i2 * 4u, phys);
+        if (ext2_write_block(child, g_map_l2) != EXT2_OK) {
+            return EXT2_ERR_IO;
+        }
+        *out_phys = phys;
+        return EXT2_OK;
+    }
+    lb -= n * n;
+
+    /* 4) 三级间接：i_block[14] -> child1 -> child2 -> 数据块 */
+    if (lb < n * n * n) {
+        uint32_t i1 = lb / (n * n);
+        uint32_t i2 = (lb / n) % n;
+        uint32_t i3 = lb % n;
+        uint32_t c1, c2;
+
+        if (b3 == 0u) {
+            rc = map_alloc_ptr_block(&b3);
+            if (rc != EXT2_OK) {
+                return rc;
+            }
+            wr32(raw + IN_BLOCKS + 14u * 4u, b3);
+            ++(*out_ptrs);
+            if (out_i3 != (uint32_t *)0) {
+                *out_i3 = b3;
+            }
+        }
+        if (read_block_to(b3, g_map_l1) != EXT2_OK) {
+            return EXT2_ERR_IO;
+        }
+        c1 = rd32(g_map_l1 + i1 * 4u);
+        if (c1 == 0u) {
+            rc = map_alloc_ptr_block(&c1);
+            if (rc != EXT2_OK) {
+                return rc;
+            }
+            wr32(g_map_l1 + i1 * 4u, c1);
+            if (ext2_write_block(b3, g_map_l1) != EXT2_OK) {
+                return EXT2_ERR_IO;
+            }
+            ++(*out_ptrs);
+        }
+        if (read_block_to(c1, g_map_l2) != EXT2_OK) {
+            return EXT2_ERR_IO;
+        }
+        c2 = rd32(g_map_l2 + i2 * 4u);
+        if (c2 == 0u) {
+            rc = map_alloc_ptr_block(&c2);
+            if (rc != EXT2_OK) {
+                return rc;
+            }
+            wr32(g_map_l2 + i2 * 4u, c2);
+            if (ext2_write_block(c1, g_map_l2) != EXT2_OK) {
+                return EXT2_ERR_IO;
+            }
+            ++(*out_ptrs);
+        }
+        if (read_block_to(c2, g_map_l3) != EXT2_OK) {
+            return EXT2_ERR_IO;
+        }
+        rc = alloc_block(0u, &phys);
+        if (rc != EXT2_OK) {
+            return rc;
+        }
+        wr32(g_map_l3 + i3 * 4u, phys);
+        if (ext2_write_block(c2, g_map_l3) != EXT2_OK) {
+            return EXT2_ERR_IO;
+        }
+        *out_phys = phys;
+        return EXT2_OK;
+    }
+    lb -= n * n * n;
+
+    return EXT2_ERR_NOSPC;
+}
+
+/* [ADD] M28：写失败时把已经占下的东西还回去。
+ * 大文件动辄上千块，写一半失败（盘满 / I/O 错）如果不回滚，盘上就留下一堆
+ * 位图里标着"已用"、却没有任何 inode 引用的块 —— 正是 fsck 报
+ * "Block bitmap differences" 的来源。 */
+static void map_rollback(uint8_t *raw, uint32_t ino)
+{
+    uint32_t freed = 0u;
+    uint32_t i, b;
+
+    for (i = 0u; i < 12u; ++i) {
+        b = rd32(raw + IN_BLOCKS + i * 4u);
+        if (b != 0u) {
+            (void)free_block(b);
+            wr32(raw + IN_BLOCKS + i * 4u, 0u);
+        }
+    }
+    (void)free_ptr_tree(rd32(raw + IN_BLOCKS + 12u * 4u), 1u, &freed);
+    (void)free_ptr_tree(rd32(raw + IN_BLOCKS + 13u * 4u), 2u, &freed);
+    (void)free_ptr_tree(rd32(raw + IN_BLOCKS + 14u * 4u), 3u, &freed);
+    (void)free_inode(ino, 0);
+}
+
+/* 流式建大文件：数据不再一次性塞进内存，而是每块回调一次 gen() 现填。
+ * 这样 16MB 的测试盘上可以直接写 4MB 的文件，而不用先攒一个 4MB 的数组。 */
+int ext2_create_stream(const char *path, uint64_t len, ext2_fill_fn gen, void *ctx,
+                       uint32_t *out_ino, uint32_t *out_blocks,
+                       uint32_t *out_ptrs, uint32_t *out_i1,
+                       uint32_t *out_i2, uint32_t *out_i3)
+{
+    char comps[PATH_MAX_COMPS][NAME_MAX_LEN];
+    char parent_path[96];
+    char name[NAME_MAX_LEN];
+    uint32_t ncomp = 0u;
+    inode_t parent;
+    dentry_t existing;
+    uint32_t pino, ino = 0u;
+    uint32_t n = g_block_size / 4u;
+    uint64_t nblk;
+    uint32_t b;
+    uint32_t nblocks = 0u, ptrs = 0u, i1 = 0u, i2 = 0u, i3 = 0u;
+    uint8_t raw[EXT2_INODE_TABLE_MAX];
+    uint32_t i, k, j;
+    int rc;
+
+    if (g_mounted == 0) {
+        return EXT2_ERR_NOTMOUNTED;
+    }
+    if (gen == (ext2_fill_fn)0 || len == 0u) {
+        return EXT2_ERR_NOSPC;
+    }
+    /* 12 直接 + 256 一级 + 65536 二级 + 16777216 三级（bs=1024 时） */
+    if (len > (uint64_t)g_block_size * (12ull + n + (uint64_t)n * n
+                                        + (uint64_t)n * n * n)) {
+        return EXT2_ERR_NOSPC;
+    }
+    if (split_path(path, comps, &ncomp) != EXT2_OK || ncomp == 0u) {
+        return EXT2_ERR_NOENT;
+    }
+
+    parent_path[0] = '/';
+    parent_path[1] = '\0';
+    if (ncomp > 1u) {
+        uint32_t m = 0u;
+        for (i = 0u; i + 1u < ncomp; ++i) {
+            parent_path[m++] = '/';
+            k = 0u;
+            while (comps[i][k] != '\0' && m + 1u < sizeof(parent_path)) {
+                parent_path[m++] = comps[i][k++];
+            }
+        }
+        parent_path[m] = '\0';
+    }
+    k = 0u;
+    while (comps[ncomp - 1u][k] != '\0' && k + 1u < sizeof(name)) {
+        name[k] = comps[ncomp - 1u][k];
+        ++k;
+    }
+    name[k] = '\0';
+
+    rc = resolve(parent_path, &parent);
+    if (rc != EXT2_OK) {
+        return rc;
+    }
+    if ((parent.mode & MODE_FMT_MASK) != MODE_FMT_DIR) {
+        return EXT2_ERR_NOTDIR;
+    }
+    pino = parent.ino;
+    if (dir_lookup(&parent, name, &existing) == EXT2_OK) {
+        return EXT2_ERR_EXIST;
+    }
+
+    rc = alloc_inode((pino - 1u) / g_inodes_per_group, &ino, 0);
+    if (rc != EXT2_OK) {
+        return rc;
+    }
+
+    for (i = 0u; i < g_inode_size; ++i) {
+        raw[i] = 0u;
+    }
+    wr16(raw + IN_MODE, (uint16_t)(MODE_FMT_REG | 0x01A4u));
+    wr32(raw + IN_SIZE_LO, (uint32_t)len);
+    wr16(raw + IN_LINKS_COUNT, 1u);
+    wr32(raw + 0x08u, 1700000000u);
+    wr32(raw + IN_CTIME, 1700000000u);
+    wr32(raw + IN_MTIME, 1700000000u);
+
+    nblk = (len + g_block_size - 1u) / g_block_size;
+    for (b = 0u; (uint64_t)b < nblk; ++b) {
+        uint64_t off = (uint64_t)b * g_block_size;
+        uint32_t take = (uint32_t)((len - off > g_block_size)
+                                   ? g_block_size : (len - off));
+        uint32_t phys = 0u;
+
+        rc = ext2_map_add(raw, b, &phys, &ptrs, &i1, &i2, &i3);
+        if (rc != EXT2_OK) {
+            map_rollback(raw, ino);
+            return rc;
+        }
+        for (j = 0u; j < g_block_size; ++j) {
+            g_wdata[j] = 0u;
+        }
+        gen(off, g_wdata, take, ctx);
+        if (ext2_write_block(phys, g_wdata) != EXT2_OK) {
+            map_rollback(raw, ino);
+            return EXT2_ERR_IO;
+        }
+        ++nblocks;
+    }
+
+    /* i_blocks 按 512 字节扇区计数，指针块也算（Linux 的 ext2 同样这么算） */
+    wr32(raw + 0x1Cu, (nblocks + ptrs) * (g_block_size / SECTOR_512));
+    if (ext2_write_inode_raw(ino, raw) != EXT2_OK) {
+        map_rollback(raw, ino);
+        return EXT2_ERR_IO;
+    }
+
+    {
+        uint32_t nb = 0u;
+        rc = add_dir_entry(pino, &parent, name, ino, 1u, &nb);
+        if (rc != EXT2_OK) {
+            return rc;
+        }
+        if (nb != 0u) {
+            uint8_t pbuf[EXT2_INODE_TABLE_MAX];
+            if (ext2_read_inode_raw(pino, pbuf) != EXT2_OK) {
+                return EXT2_ERR_IO;
+            }
+            wr32(pbuf + IN_SIZE_LO, parent.size + g_block_size);
+            wr32(pbuf + IN_MTIME, 1700000000u);
+            for (j = 0u; j < 15u; ++j) {
+                wr32(pbuf + IN_BLOCKS + j * 4u, parent.block[j]);
+            }
+            if (ext2_write_inode_raw(pino, pbuf) != EXT2_OK) {
+                return EXT2_ERR_IO;
+            }
+        }
+    }
+
+    if (out_ino != (uint32_t *)0) {
+        *out_ino = ino;
+    }
+    if (out_blocks != (uint32_t *)0) {
+        *out_blocks = nblocks;
+    }
+    if (out_ptrs != (uint32_t *)0) {
+        *out_ptrs = ptrs;
+    }
+    if (out_i1 != (uint32_t *)0) {
+        *out_i1 = i1;
+    }
+    if (out_i2 != (uint32_t *)0) {
+        *out_i2 = i2;
+    }
+    if (out_i3 != (uint32_t *)0) {
+        *out_i3 = i3;
+    }
+    return EXT2_OK;
+}
+
+/* ---------- 读路径的另一半：按偏移读（只查表，不分配） ---------- */
+
+/* 逻辑块 -> 物理块：纯只读地走一遍指针树，任何一层缺块都返回 0。
+ * 和 ext2_map_add 的差别只有"不分配"，这正是 Linux ext2_bmap() 的语义。 */
+static uint32_t map_lookup(const inode_t *f, uint32_t lb)
+{
+    uint32_t n = g_block_size / 4u;
+    uint32_t i1, i2, i3, blk;
+
+    if (lb < 12u) {
+        return f->block[lb];
+    }
+    lb -= 12u;
+    if (lb >= n) {
+        lb -= n;
+        if (lb >= n * n) {
+            lb -= n * n;
+            if (lb >= n * n * n) {
+                return 0u;
+            }
+            i1 = lb / (n * n);
+            i2 = (lb / n) % n;
+            i3 = lb % n;
+            if (f->block[14] == 0u) {
+                return 0u;
+            }
+            if (read_block_to(f->block[14], g_map_l1) != EXT2_OK) {
+                return 0u;
+            }
+            blk = rd32(g_map_l1 + i1 * 4u);
+            if (blk == 0u || read_block_to(blk, g_map_l2) != EXT2_OK) {
+                return 0u;
+            }
+            blk = rd32(g_map_l2 + i2 * 4u);
+            if (blk == 0u || read_block_to(blk, g_map_l3) != EXT2_OK) {
+                return 0u;
+            }
+            return rd32(g_map_l3 + i3 * 4u);
+        }
+        i1 = lb / n;
+        i2 = lb % n;
+        if (f->block[13] == 0u) {
+            return 0u;
+        }
+        if (read_block_to(f->block[13], g_map_l1) != EXT2_OK) {
+            return 0u;
+        }
+        blk = rd32(g_map_l1 + i1 * 4u);
+        if (blk == 0u || read_block_to(blk, g_map_l2) != EXT2_OK) {
+            return 0u;
+        }
+        return rd32(g_map_l2 + i2 * 4u);
+    }
+    if (f->block[12] == 0u) {
+        return 0u;
+    }
+    if (read_block_to(f->block[12], g_map_l1) != EXT2_OK) {
+        return 0u;
+    }
+    return rd32(g_map_l1 + lb * 4u);
+}
+
+/* 从 off 开始读 maxlen 字节。ext2_read 只能从 0 读，这里按逻辑块跳，
+ * 所以读 2MB 文件的尾巴不用先把 2MB 全装进内存。 */
+int ext2_read_at(const char *path, uint64_t off, uint8_t *buf, uint64_t maxlen,
+                 uint64_t *outlen)
+{
+    inode_t f;
+    uint64_t written = 0u;
+    uint32_t lb;
+    int rc;
+
+    if (g_mounted == 0) {
+        return EXT2_ERR_NOTMOUNTED;
+    }
+    if (buf == (uint8_t *)0) {
+        return EXT2_ERR_CORRUPT;
+    }
+    rc = resolve(path, &f);
+    if (rc != EXT2_OK) {
+        return rc;
+    }
+    if ((f.mode & MODE_FMT_MASK) != MODE_FMT_REG) {
+        return EXT2_ERR_ISDIR;
+    }
+    if (off >= (uint64_t)f.size) {
+        if (outlen != (uint64_t *)0) {
+            *outlen = 0u;
+        }
+        return EXT2_OK;
+    }
+    lb = (uint32_t)(off / g_block_size);
+    while (written < maxlen && off + written < (uint64_t)f.size) {
+        uint32_t phys = map_lookup(&f, lb);
+        uint32_t in_block = (uint32_t)((off + written) % g_block_size);
+        uint64_t left = (uint64_t)f.size - (off + written);
+        uint32_t take = g_block_size - in_block;
+        uint32_t i;
+
+        if (phys == 0u) {
+            return EXT2_ERR_CORRUPT;      /* 空洞（本内核从不写空洞） */
+        }
+        if (take > maxlen - written) {
+            take = (uint32_t)(maxlen - written);
+        }
+        if ((uint64_t)take > left) {
+            take = (uint32_t)left;
+        }
+        if (read_block_to(phys, g_block_buf2) != EXT2_OK) {
+            return EXT2_ERR_IO;
+        }
+        for (i = 0u; i < take; ++i) {
+            buf[written + i] = g_block_buf2[in_block + i];
+        }
+        written += take;
+        ++lb;
+    }
+    if (outlen != (uint64_t *)0) {
+        *outlen = written;
+    }
+    return EXT2_OK;
+}
+
+/* ==================================================================== */
 /* [ADD] M23：释放 —— 把盘上的东西删掉                                 */
 /*                                                                    */
 /* M21/M22 只会让盘变胖。这里补另一半：                                */
@@ -1604,20 +2128,41 @@ static int free_inode(uint32_t ino, int was_dir)
     return EXT2_OK;
 }
 
+/* [ADD] M28：递归释放时每一层都要有自己的缓冲。
+ * M23 只有一个 g_freebuf，一级间接够用；二级间接树里内层递归会把外层的
+ * 指针数组覆盖掉，外层再往下走拿到的就是垃圾块号，free_block 一查位图就
+ * 报 I/O error（也正是 ext2rm 大文件时报错的原因）。最多三层，给三块。 */
+static uint8_t g_free_lv1[EXT2_INODE_TABLE_MAX];
+static uint8_t g_free_lv2[EXT2_INODE_TABLE_MAX];
+static uint8_t g_free_lv3[EXT2_INODE_TABLE_MAX];
+
+static uint8_t *free_buf_for(uint32_t level)
+{
+    if (level >= 3u) {
+        return g_free_lv3;
+    }
+    if (level == 2u) {
+        return g_free_lv2;
+    }
+    return g_free_lv1;
+}
+
 /* 递归释放一棵"指针树"：level=1 是一级间接（叶子是数据块），level=2 是二级 */
 static int free_ptr_tree(uint32_t ptr_blk, uint32_t level, uint32_t *count)
 {
     uint32_t slots = g_block_size / 4u;
     uint32_t i;
+    uint8_t *pb;
 
     if (ptr_blk == 0u) {
         return EXT2_OK;
     }
-    if (read_block_to(ptr_blk, g_freebuf) != EXT2_OK) {
+    pb = free_buf_for(level);
+    if (read_block_to(ptr_blk, pb) != EXT2_OK) {
         return EXT2_ERR_IO;
     }
     for (i = 0u; i < slots; ++i) {
-        uint32_t child = rd32(g_freebuf + i * 4u);
+        uint32_t child = rd32(pb + i * 4u);
         if (child == 0u) {
             continue;
         }
@@ -1668,9 +2213,10 @@ static int ext2_truncate(uint8_t *raw, uint32_t *out_freed)
     if (free_ptr_tree(ptr[1], 2u, &freed) != EXT2_OK) {
         return EXT2_ERR_IO;
     }
-    /* 三级间接：本内核从不分配，但读路径认得它，这里一并说明不予处理 */
-    if (ptr[2] != 0u) {
-        return EXT2_ERR_CORRUPT;
+    /* [ADD] M28：三级间接现在也会被分配，free_ptr_tree 本身是递归的，
+     * 传 3 就是"这一层下面还有两层"，不需要为它另写一套释放逻辑。 */
+    if (free_ptr_tree(ptr[2], 3u, &freed) != EXT2_OK) {
+        return EXT2_ERR_IO;
     }
     wr32(raw + IN_BLOCKS + 12u * 4u, 0u);
     wr32(raw + IN_BLOCKS + 13u * 4u, 0u);

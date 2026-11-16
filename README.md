@@ -1,16 +1,16 @@
-# zh_OS 0.2beta (x86_64)
+# zh_OS 1.0 (x86_64)
 
 zh_OS 是一个 x86_64 64 位微型内核：GRUB2 + Multiboot2 引导，NASM + freestanding C
 （无 libc），运行在 80x25 VGA 彩色文本模式下。它已经具备长模式、4 级页表、GDT、IDT/ISR/PIC、
 PS/2 键盘、行编辑器、仿 Linux 的账户登录、带彩色提示符的内置 Shell、内存文件系统 ramfs、
 ATA PIO 磁盘驱动（账户表持久化）以及 FAT16 只读挂载。
 
-- **统一版本号**：zh_OS 0.2beta (x86_64)。启动横幅、uname 命令、登录横幅与 GRUB 菜单项
+- **统一版本号**：zh_OS 1.0 (x86_64)。启动横幅、uname 命令、登录横幅与 GRUB 菜单项
   都由 kernel/version.h 的 ZH_OS_VERSION_TEXT 提供；build.sh 在构建时会校验脚本侧的
   VERSION_TEXT 与它一致，防止只改一处造成版本漂移。
 - **开发/构建环境**：宿主机 Windows 11，构建环境 WSL2 + Ubuntu。所有脚本都是 Linux `.sh`，
   在 WSL 内运行，**不生成任何 `.bat`**。
-- **可启动产物**：zh_OS-0.2beta.iso（Hybrid ISO，可用于 QEMU / VirtualBox / VMware）。
+- **可启动产物**：zh_OS-1.0.iso（Hybrid ISO，可用于 QEMU / VirtualBox / VMware）。
 
 > **首次登录**：内置 `root`（uid 0 / gid 0 / `/root` / 管理员）与
 > `zh`（uid 1000 / gid 1000 / `/home/zh`），**两者初始密码都是 `zh`**。
@@ -59,7 +59,7 @@ zh_OS/
 ├── check.sh        只读环境体检：打印 gcc/nasm/grub-mkrescue/xorriso/qemu 版本
 ├── build.sh        一键编译（内核 + 用户态 ELF + 二进制嵌入）+ grub-mkrescue 出 ISO
 ├── env.mode        工具链路线（system-gcc / cross）
-├── COMMANDS.txt    58 条内置命令速查与详解
+├── COMMANDS.txt    67 条内置命令速查与详解
 └── README.md
 ```
 
@@ -113,7 +113,7 @@ cd ~/zh_OS
 
 | 产物 | 说明 |
 | --- | --- |
-| `zh_OS-0.2beta.iso` | 可启动 ISO，供 QEMU / VirtualBox / VMware 使用 |
+| `zh_OS-1.0.iso` | 可启动 ISO，供 QEMU / VirtualBox / VMware 使用 |
 | `build/zh_OS.elf` | 内核 ELF（调试用） |
 | `iso/` | ISO 组织目录（`iso/boot/zh_OS.elf`、`iso/boot/grub/grub.cfg`） |
 
@@ -188,12 +188,12 @@ VGA 文本模式是 CP437 字符集，没有中文字模。内核里的提示/�
 
 ## 四、首次启动与登录
 
-1. GRUB 菜单显示 **zh_OS 0.2beta (x86_64)**，自动进入内核。
+1. GRUB 菜单显示 **zh_OS 1.0 (x86_64)**，自动进入内核。
 2. 短暂显示 Linux printk 风格启动日志（banner、`gdt:` / `paging:` / `vga:` / `idt:` /
    `pic:` / `keyboard:` / `users:`，亮绿 `Long mode active.` 与 `Interrupts enabled (sti).`）。
    末尾还有一行蓝字 ATA 探测结果：挂了可写盘是 `[ATA] user table loaded from disk`，
    没挂盘是 `[ATA] no disk, using defaults`。
-3. `login_screen()` 清屏，画蓝框 + 三色标题 `zh_OS 0.2beta (x86_64) Login`。
+3. `login_screen()` 清屏，画蓝框 + 三色标题 `zh_OS 1.0 (x86_64) Login`。
 4. `login: ` 输入 `zh`，`Password: ` 输入 `zh`（回显 `*`），得到亮绿
    `Welcome back, zh!` 与 `uid=1000 gid=1000 home=/home/zh shell=/bin/zhsh`。
 5. 进入彩色 Shell 提示符 `[zh@zh_OS ~]$ `（root 为红色 `#`）。
@@ -208,7 +208,7 @@ VGA 文本模式是 CP437 字符集，没有中文字模。内核里的提示/�
 | `help` | 彩色列出全部命令与说明 | 全部用户 |
 | `clear` | 清屏 | 全部用户 |
 | `echo [args...]` | 绿色输出参数（空格连接） | 全部用户 |
-| `uname` | 亮绿输出 `zh_OS 0.2beta (x86_64)` | 全部用户 |
+| `uname` | 亮绿输出 `zh_OS 1.0 (x86_64)` | 全部用户 |
 | `whoami` | 输出当前用户名 | 全部用户 |
 | `login` | 在当前 Shell 内重新登录，返回后提示符按新用户上色 | 全部用户 |
 | `logout` | 退出 Shell，回到登录界面 | 全部用户 |
@@ -251,7 +251,7 @@ VGA 文本模式是 CP437 字符集，没有中文字模。内核里的提示/�
 | `demand` | 跑 `/bin/demanddemo.elf`：它声明 64KB `.bss`（16 页）却只碰 3 页，命令打印 `cost@load` / `cost@run` / `pages materialised`，证明页在**第一次访问时才出现**（M16） | 全部用户 |
 | `sig` | 投递一个 SIGKILL 给还没跑的自旋进程 + 跑 `/bin/sigdemo.elf`（fork→kill→waitpid），打印 `term_sig` / `exit_code=137`，证明信号在**回 ring3 那一刻**才送达（M17） | 全部用户 |
 
-合计 **58 条**，与 `help` 输出条数一致。其中 `ls/cd/pwd/cat/mkdir/touch/rm`
+合计 **64 条**，与 `help` 输出条数一致。其中 `ls/cd/pwd/cat/mkdir/touch/rm`
 操作的是 **ramfs**（内存文件系统），`fatls/fatcat` 操作的是 **FAT16 只读盘**，
 `ring3/syscall` 是用户态自检，`memmap` 看物理内存，`tasks/taskrun` 看进程与调度，
 `vmspace` 看每个进程自己的页表，互不覆盖、互不干扰。
@@ -272,7 +272,7 @@ VGA 文本模式是 CP437 字符集，没有中文字模。内核里的提示/�
 
 ```bash
 cd ~/zh_OS
-qemu-system-x86_64 -cdrom zh_OS-0.2beta.iso -m 128
+qemu-system-x86_64 -cdrom zh_OS-1.0.iso -m 128
 ```
 
 关闭 QEMU：按 `Ctrl+Alt+G` 释放鼠标后关闭窗口，或在终端按 `Ctrl+C`。
@@ -286,7 +286,7 @@ dd if=/dev/zero of=disk.img bs=1M count=16
 # 从盘：脚本用 mkfs.vfat -F 16 造 32MB 盘，并写入 hello.txt / zh.txt / sub/
 ./build/mkfat16_img.sh
 
-qemu-system-x86_64 -cdrom zh_OS-0.2beta.iso -m 128 \
+qemu-system-x86_64 -cdrom zh_OS-1.0.iso -m 128 \
   -drive file=disk.img,format=raw,if=ide \
   -drive file=data.img,format=raw,if=ide,index=1
 ```
@@ -317,14 +317,14 @@ python3 build/parse_vga.py dump.log 'a,b,c'   # 把 xp 导出的 VGA 文本渲�
 先把 ISO 复制到 Windows（在 WSL 内执行，把用户名换成实际的）：
 
 ```bash
-cp zh_OS-0.2beta.iso /mnt/c/Users/你的用户名/Desktop/
+cp zh_OS-1.0.iso /mnt/c/Users/你的用户名/Desktop/
 ```
 
 然后在 VirtualBox 中：
 
 1. 新建虚拟机 → 类型 **Linux**，版本 **Other / Unknown 64-bit**
 2. 内存 **128 MB** 以上，不创建虚拟硬盘
-3. 设置 → 存储 → 光驱选择桌面上的 `zh_OS-0.2beta.iso`
+3. 设置 → 存储 → 光驱选择桌面上的 `zh_OS-1.0.iso`
 4. 启动，GRUB 菜单出现后回车
 
 ### 6.3 Windows 下 VMware Workstation
@@ -334,7 +334,7 @@ cp zh_OS-0.2beta.iso /mnt/c/Users/你的用户名/Desktop/
 1. 新建虚拟机 → 典型（或自定义）→ 稍后安装操作系统
 2. 客户机操作系统选 **Linux**，版本 **其他 Linux 2.6 x86_64**
    （Other Linux 2.6.x kernel 64-bit）
-3. 内存 128 MB 以上，光驱（CD/DVD）加载 `zh_OS-0.2beta.iso`
+3. 内存 128 MB 以上，光驱（CD/DVD）加载 `zh_OS-1.0.iso`
 4. 启动虚拟机
 
 > VirtualBox / VMware 都是 Windows 图形程序，需要在宿主机手动操作；
@@ -351,7 +351,7 @@ cp zh_OS-0.2beta.iso /mnt/c/Users/你的用户名/Desktop/
 | 操作 | 预期结果 |
 | --- | --- |
 | `login: zh` / `Password: zh` | 绿色 `Welcome back, zh!` + 绿色 `[zh@zh_OS ~]$` |
-| `help` | 彩色 58 条命令列表 |
+| `help` | 彩色 64 条命令列表 |
 | `color` | 一屏 16 色板 |
 | `ls` / `cd /home/zh` / `pwd` / `cat readme.txt` | ramfs 列目录、切目录、打印路径与文件内容 |
 | `mkdir tmp` / `touch a.txt` / `rm a.txt` | ramfs 建目录、建文件、删除，均绿字反馈 |
@@ -371,6 +371,12 @@ cp zh_OS-0.2beta.iso /mnt/c/Users/你的用户名/Desktop/
 | `shutdown` / `reboot` | 黄字停机 / 重新引导到登录界面 |
 
 ## 七、已知限制
+
+- **ext2 三级间接块没有实测**：写入的分配（`ext2_map_add`）、读取的查表
+  （`map_lookup` / `ext2_read_at`）、删除的递归释放（`free_ptr_tree(…, 3)`）
+  三条路径都按 Linux 的三层指针树写好了，但三级间接要到
+  `12 + 256 + 65536` 块之后（bs=1024 时约 64MB）才会被用到，16MB 的测试盘
+  装不下。实测过的是二级间接（268KB…64MB），写到 2MB 并读回末尾标记。
 
 - **账户持久化依赖可写磁盘**：账户表默认是内存态静态数组；只有挂了 IDE 可写盘时，
   启动阶段才从 `LBA 200-207` 读回，`useradd` / `passwd` 成功后立即回写。
@@ -427,7 +433,7 @@ cp zh_OS-0.2beta.iso /mnt/c/Users/你的用户名/Desktop/
   并打一行蓝字 `[ATA] user table loaded from disk` 或 `[ATA] no disk, using defaults`；
   `users_load()` 校验 magic/version，失败则静默保留内置账户，无盘时返回 0 走默认。
 - **前置条件**：必须挂一块可写磁盘，例如
-  `qemu-system-x86_64 -cdrom zh_OS-0.2beta.iso -drive file=disk.img,format=raw,if=ide -m 128`。
+  `qemu-system-x86_64 -cdrom zh_OS-1.0.iso -drive file=disk.img,format=raw,if=ide -m 128`。
 
 ### 用户态 M1 / 系统调用 M2 / 物理内存 M3（已实现）
 
@@ -2370,6 +2376,450 @@ text grid   240x67 cells (8x16 font)
 内核里没有缺页中断兜底的时候，唯一正确的做法就是"先建映射、再动指针"。
 `fb_set_mode()` 现在就是这个顺序，`paging_map_2mb_range()` 也已经是幂等的。
 
+### 大文件：二级/三级间接块 M28（已实现）
+
+M22 让内核能写出超过 12KB 的文件，但只给 `i_block[12]` 建了一个指针块，
+上限 `block_size * (12 + block_size/4)` —— bs=1024 时 **268KB**。
+M28 把 ext2 的整棵指针树补齐，单文件上限变成约 16GB。
+
+#### 1) 指针树的形状
+
+```
+i_block[0..11]   直接块                       12 个
+i_block[12]      指针块 -> 数据块            256 个（一级间接）
+i_block[13]      指针块 -> 指针块 -> 数据块   65536 个（二级间接）
+i_block[14]      三层指针 -> 数据块           16777216 个（三级间接）
+```
+
+`bs=1024` 时一个指针块有 `1024/4 = 256` 个 u32 槽位，每层乘 256。
+这就是 Linux `ext2_get_block()` 里 `add_branch()` 干的事：**要给第 n 个逻辑块
+找位置，先看路径上哪一层还没建，缺哪层补哪层**。
+
+#### 2) 写路径：`ext2_map_add()`
+
+```
+static int ext2_map_add(uint8_t *raw, uint32_t lb,   /* 逻辑块号 */
+                        uint32_t *out_phys,          /* 拿到的物理块 */
+                        uint32_t *out_ptrs, ...)     /* 新分配了几个指针块 */
+```
+
+- 逻辑块号先减 12、再减 256、再减 65536，落在哪一档就走哪一层；
+- 每层的指针块都是 `alloc_block()` 拿的，拿完立刻清零点写下去（`map_alloc_ptr_block`）；
+- 槽位写进指针块后**马上写回盘**，再返回数据块号 —— 顺序是"先指针、后数据"。
+  中途掉电最多留下一个指向全零块的指针，`fsck` 只会说"块没用满"，
+  不会说"指针指到没分配的块"。
+
+配套的 `ext2_create_stream()` 换了写法：**不再要求调用方把整份数据塞进内存**。
+每写一个数据块回调一次 `gen(off, buf, n, ctx)` 现生成内容 —— 2MB 文件
+只占 4KB 左右的缓冲，16MB 的测试盘才装得下 2MB 文件。
+
+失败要还账：`ext2_map_add()` 之后的任何一步出错（盘满 / I/O 错），
+`map_rollback()` 会把已经分配的直接块、三层指针树、inode 全部释放掉。
+不回滚就会在盘上留下"位图标着已用、没有 inode 引用"的块，
+正是 `e2fsck` 报 `Block bitmap differences: -(…)` 的来源 ——
+第一版验收时就是这么被 fsck 抓到的。
+
+#### 3) 读路径：从"只认两层"到"有几层认几层"
+
+M19 的 `copy_from_pointer_block(ptr, level, …)` 里写死了 `level == 2` 才递归，
+本质是个两层特例。M28 改成：
+
+```
+if (level > 1u) {                       /* 有几层就往下走几层 */
+    written = copy_from_pointer_block(child, level - 1u, buf, cap, written);
+    continue;
+}
+```
+
+并在 `ext2_read()` 末尾补上 `f.block[14]` 那一档（`level=3`）。
+
+但 `ext2_read()` 只能从 0 读、`ext2cat` 又只缓冲 32KB，验证不了 2MB 文件的
+尾巴。所以加了按偏移读的一对函数：
+
+```
+map_lookup(f, lb)       逻辑块 -> 物理块，纯查表不分配（≈ Linux ext2_bmap）
+ext2_read_at(path, off, buf, maxlen, &got)   从任意偏移读
+```
+
+命令 `ext2tail <path> [bytes]` 就是它们的入口：算 `off = size - n`，
+只把那几块读进来打印，2MB 文件也不用整份装内存。
+
+#### 4) 释放：`free_ptr_tree` 每层一块缓冲（这一步踩了坑）
+
+M23 的 `free_ptr_tree()` 是递归的，但**所有层共用 `g_freebuf`**。
+一级间接（只有一层递归）看不出问题；二级间接里内层递归会把外层的
+指针数组覆盖掉，外层再往下走拿到的就是垃圾块号，`free_block()`
+一查位图就报错 —— 现象是 `ext2rm /big1m.txt` 直接红字
+`ext2rm: I/O error`，而且**目录项已经摘了、块也放了一半**，盘处于半坏状态。
+
+修法是给三层各配一块缓冲（`g_free_lv1/lv2/lv3` + `free_buf_for(level)`）。
+递归深度最多 3，所以 3 块就够，不用动态分配。
+
+#### 5) 新命令
+
+```
+ext2big  <path> [KB]     生成一个 KB 大小的文件（默认 1024，上限 4096）
+ext2tail <path> [bytes]  读文件最后 N 字节（默认 128，上限 512）
+```
+
+`ext2big` 的内容是每 64 字节一行、行首带序号的正文，末尾 18 字节固定写
+`END-OF-HUGE-WRITE!` —— 这一串**必然落在 268KB 之后**，只有二级间接块
+写对了才读得到。命令还会打印这次用到了哪几层：
+
+```
+wrote /big2m.txt  inode 19  2097152 bytes, 2048 data blocks, 9 pointer block(s)
+  indirect: i_block[12]=#1663  i_block[13]=#1920  i_block[14]=#0
+```
+
+#### 6) 验收
+
+```
+ext2big /big1m.txt 1024
+  wrote /big1m.txt  inode 18  1048576 bytes, 1024 data blocks, 5 pointer block(s)
+  indirect: i_block[12]=#634  i_block[13]=#891  i_block[14]=#0
+ext2big /big2m.txt 2048
+  wrote /big2m.txt  inode 19  2097152 bytes, 2048 data blocks, 9 pointer block(s)
+  indirect: i_block[12]=#1663  i_block[13]=#1920  i_block[14]=#0
+ext2tail /cat2m.txt 200
+  ext2tail: /cat2m.txt (size 2097152, from offset 2096952)
+  ... 行尾 ...END-OF-HUGE-WRITE!
+ext2rm /big1m.txt
+  removed /big1m.txt  inode 18  1029 blocks freed        (1024 数据 + 5 指针)
+```
+
+宿主侧（WSL）：
+
+```
+debugfs -R "stat /big2m.txt"
+  Size: 2097152   Blockcount: 4114
+  BLOCKS: (0-11):1651-1662, (IND):1663, (12-267):1664-1919, (DIND):1920,
+          (IND):1921, (268-523):1922-2177, ...                  <- DIND 就是 i_block[13]
+  TOTAL: 2057
+e2fsck -fn  ->  18/4096 files, 3258/16384 blocks，五个 Pass 全过、0 错误
+```
+
+`Blockcount 4114 = (2048 数据 + 9 指针) * 2`（按 512 字节扇区算），
+和命令打印的 `2048 data blocks, 9 pointer block(s)` 对得上。
+删掉 1MB 文件之后盘回到 3258 块、`big1m` 的 inode 也没了 ——
+"放掉 1029 块且 fsck 干净"是递归释放写对了的最硬判据。
+
+#### 7) 已知限制
+
+- **三级间接块未实测**：要文件超过 64MB 才会走到 `i_block[14]`，
+  16MB 测试盘装不下；加上 ATA PIO 逐扇区写，2MB 就要一分半，
+  64MB 在可接受时间内跑不完。代码三条路径都在，但只有二级间接有实测数据。
+- **没有块组均衡**：`alloc_block(0, …)` 永远从第 0 组找空块，
+  大文件会集中在一处；Linux 用 `ext2_new_block` 的 goal 参数做就近分配。
+- **`ext2big` 上限 4096KB**：这是命令自己的参数限制，不是文件系统限制。
+
+### UEFI 双启动 + 更大的帧缓冲 M29（已实现）
+
+真机（RedmiBook 14 2026）只有 UEFI，没有 BIOS 兼容层。M29 把 ISO 做成
+**BIOS + UEFI 双启动**，同时把控制台能吃的分辨率上限抬到真机那块屏。
+
+#### 1) 一张 ISO 两个 El Torito 入口
+
+`build.sh` 的 `build_iso()` 不再交给 `grub-mkrescue`，改成手工拼：
+
+- BIOS 侧：把 `/usr/lib/grub/i386-pc` 的 `*.mod`、`*.lst`、`eltorito.img`
+  拷进 `iso/boot/grub/i386-pc/`，再让 `xorriso -as mkisofs` 以
+  `-b boot/grub/i386-pc/eltorito.img` 建第一个启动入口，
+  `--grub2-mbr .../boot_hybrid.img` 带上混合 MBR；
+- UEFI 侧：`-eltorito-alt-boot -e EFI/efi.img` 是第二个入口，
+  `efi.img` 是一个 8MB 的 FAT 镜像（`dd` + `mformat -M 512` + `mmd`
+  + `mcopy`），里面只有 `EFI/BOOT/BOOTX64.EFI`；
+- 最后 `-isohybrid-gpt-basdat` 让同一个 ISO 也能直接写进 U 盘。
+
+`BOOTX64.EFI` 由 `grub-mkstandalone` 生成（`-O x86_64-efi`），并**把两个内核
+ELF 一起塞进 GRUB 的 memdisk**：
+
+```
+grub-mkstandalone -d build/grub-efi -O x86_64-efi   --modules="multiboot2 normal iso9660 part_msdos part_gpt video all_video gfxterm boot"   -o build/BOOTX64.EFI   boot/grub/grub.cfg=<efi_cfg> boot/zh_OS.elf=<...> boot/zh_OS_fb.elf=<...>
+```
+
+#### 2) 踩到的坑：UEFI 下找不到内核
+
+第一版没塞 memdisk，EFI GRUB 起来后报：
+
+```
+error: file '/boot/zh_OS_fb.elf' not found.
+```
+
+原因是 UEFI 固件把 ISO 交给 GRUB 后，EFI 侧的 `iso9660` 驱动没能枚举到
+光驱（BIOS 侧同一个 ISO 正常）。把内核放进 memdisk，再 `set root=(memdisk)`
+就与光驱枚举彻底解耦：GRUB 从内存里读 ELF，`multiboot2` 直接加载。
+
+#### 3) 控制台容量抬到 480×160，模式上限 3840×2160
+
+真机是 2880×1800，按 8×16 点阵算是 360×112 字符 —— 老缓冲（320×100）装不下。
+`FB_BUF_COLS/ROWS` 提到 **480×160**，`fb_set_mode()` 的上限从 2560×1600
+提到 **3840×2160**。缓冲变大后 `fb.c` 里的历史滚动逻辑不用改，只是整屏重绘
+的代价变高了一点。
+
+验证：`build/qemu_m29.sh` 同一张 ISO 跑两遍 —— BIOS 侧到 1280×800 登录界面，
+UEFI 侧（`OVMF_CODE_4M.fd` + `OVMF_VARS_4M.fd`）到 800×600 登录界面。
+OVMF 起得慢，菜单要等 6～14 秒才出现。
+
+### PCI 枚举 M30（已实现）
+
+要在真机上碰硬盘，第一步是找到存储控制器 —— 而 SATA 控制器的位置只能从
+PCI 配置空间问出来。M30 新增 `drivers/pci.c`：
+
+- 只走 0xCF8/0xCFC 这对端口（`bus<<16 | slot<<11 | func<<8 | off`），
+  不依赖 ACPI 的 MMCONFIG；
+- `pci_scan()` 扫 bus0 的 32 个 slot，`header_type` bit7 置位的设备
+  再展开 func1..7；
+- `pci_find_class(cls, sub, &dev)` 按类找设备，`pci_bar_mmio(dev, i)`
+  取第 i 个 BAR 的 MMIO 基址（跳过 IO BAR，64 位 BAR 取低 32 位）；
+- `pci_enable_mem_busmaster()` 置命令寄存器 bit0/1/2（IO + Memory + Bus Master），
+  少了 Bus Master 位，DMA 一条都发不出去。
+
+`pci` 命令输出这台机器上的 7 个设备，其中
+
+```
+0:4.0 8086:2922 class 01/06  [AHCI]
+```
+
+就是 QEMU 的 ich9-ahci；真机上对应的是 Intel 的 SATA 控制器。
+
+### AHCI：让内核真的读写 SATA 盘 M31（已实现）
+
+这是"能在自己电脑上用盘"的核心一步。`drivers/ahci.c` 做的事按顺序是：
+
+1. `pci_find_class(0x01, 0x06)` 找控制器，`pci_bar_mmio(dev, 5)` 取 ABAR；
+2. ABAR 一般在 3GB 以上，低 1GB 的恒等映射盖不到，先
+   `paging_map_2mb_range(bar & ~0xFFF, 0x200000)` 把它映进来
+   （**注意这个函数成功返回 1、失败返回 0**，跟常见约定相反）；
+3. `GHC.AE` 置位，逐端口看 `PI` 位图、`PxSIG == 0x00000101`、`PxSSTS.DET == 3`；
+4. 起端口：先清 `ST` **和 `FRE`** 再等 `CR` 归零 —— `FRE=1` 时写 `PxCLB`/`PxFB`
+   会被控制器直接丢弃；复位后还要等 `SSTS.DET` 回到 3，否则命令会被设备丢掉；
+5. 命令表 / FIS / PRDT 全部用静态数组（1024 / 256 / 128 对齐），
+   靠恒等映射把虚拟地址当物理地址填给控制器；
+6. 发命令（CFIS 的 0x27/0x80，命令码 0x25 读 / 0x35 写，LBA 48 位，count=1），
+   命令头 DW0 = `CFL 5 | W | PRDTL 1`，DW2 = 命令表物理地址，然后置 `PxCI` 轮询清零，
+   最后看 `PxTFD` 的 `ERR/DF`。
+
+#### 踩到的坑（都是"看起来成功，数据是 0"）
+
+| 现象 | 根因 |
+| --- | --- |
+| `ahci: no SATA controller`，ABAR 一直是 0 | `paging_map_2mb_range()` 成功返回 **1**，代码按"非 0 即失败"判，把成功当失败 |
+| 命令链路全绿（`IS=0x1`、`TFD=0x50`、`CI=0`）但数据全 0 | PRDT 的 DBC 写到了偏移 8；AHCI 1.3 里偏移 8 是保留，**DBC 在偏移 12**，控制器读到 DBC=0 就只搬 1 个字节 |
+| `PxCLB/PxFB` 回读是自己写的值，但 FIS 区始终是 0 | 改这两个寄存器时 `PxCMD.FRE` 必须为 0，只清 `ST` 不够 |
+
+`ata.c` 里 `ata_read_sector` / `ata_write_sector` / `ata_disk_present`
+都加了 `ahci_ready()` 前置分支，于是 `ext2mount` / `ext2ls` / `ext2create`
+在 SATA 盘上不需要改一行代码就能用。
+
+验证（`build/qemu_m31.sh`，`-device ich9-ahci` + `ide-hd` 挂一块 ext2 镜像）：
+
+```
+ahci: ABAR 0xfebf1000  CAP 0xc0141f05  PI 0x0000003f
+  active port 0  signature 0x00000101
+  lba2 head = 00 10 00 00  magic 0xef53  (ext2 OK)
+ext2 mounted from the primary IDE disk
+```
+
+写路径用 `build/qemu_m31write.sh` 验：内核里 `ext2create /ahciw.txt hi-from-ahci`
+之后，宿主 `e2fsck -fn` 干净、`debugfs -R "stat /ahciw.txt"` 能看到 inode 18、
+size 11 —— 说明写是真的落到镜像上了。
+
+### NVMe：PCIe SSD M32（已实现）
+
+AHCI 只覆盖 SATA。现在笔记本上的 SSD 基本都是 NVMe，所以 M32 补上这条路。
+`drivers/nvme.c` 与 AHCI 是两种完全不同的模型：
+
+| | AHCI | NVMe |
+| --- | --- | --- |
+| 触发方式 | 写 `PxCI` 中的一个位 | 往 SQ 门铃写新的 tail |
+| 命令形状 | 命令表 + FIS + PRDT | 64 字节的队列项 |
+| 完成方式 | 轮询 `PxCI` 清零 | 完成项里 16 字节，靠 phase 位判新 |
+| 数据地址 | PRDT 项 | 命令里的 PRP1（可挂 PRP list） |
+
+实现步骤：
+
+1. `pci_find_class(0x01, 0x08)` 找控制器，`pci_bar_mmio64(&dev, 0)` 取 BAR0
+   —— 新增的 64 位版本，因为 NVMe 的寄存器组常常被固件放到 4GB 以上；
+2. BAR0 同样先 `paging_map_2mb_range(bar & ~0xFFF, 0x200000)`；
+3. 关 `CC.EN` 等 `CSTS.RDY` 归零，写 `AQA`/`ASQ`/`ACQ`，再开
+   `CC.EN | IOSQES(6) | IOCQES(4)`，等 `CSTS.RDY == 1`；
+4. `Identify Controller`（拿型号字符串）→ `Identify Namespace List`（拿 NSID）
+   → `Identify Namespace`（拿 `NSZE` 与 `LBAF[].LBADS`，即块大小与容量）；
+5. 建一对 I/O 队列（`Create I/O CQ` 然后 `Create I/O SQ`，各 8 项）。
+
+读 / 写各是一条 I/O 命令：`Read(0x02)` / `Write(0x01)`，`CDW10-11` 是 64 位 SLBA，
+`CDW12` 的 NLB=0 表示 1 块，数据地址在 `DW6`（PRP1）。数据先落到内部的 512 字节
+对齐缓冲，再 memcpy 给调用方 —— 省掉"缓冲区跨 4KB 页要挂 PRP2"的麻烦。
+
+#### 踩到的坑：PRP1 写在了 DW12
+
+和 AHCI 那次 DBC 偏移错一模一样：**字段位置记错，控制器就按 0 处理**。
+NVMe 的命令头里 `DW0` 是 opcode/CID、`DW1` 是 NSID、`DW4-5` 是 MPTR，
+**`DW6` 才是 PRP1**，`DW10` 往后才是命令专属字段。第一版把 PRP1 写到 `DW12`：
+
+- `Identify` 返回 status 0（"成功"），缓冲区却全是 0；
+- `Create SQ` 的 `addr` 在 QEMU trace 里是 `0x0`；
+- I/O 读 LBA2 失败。
+
+把 PRP1 改到偏移 24（DW6）之后立刻正常。教训与 M31 相同：这类寄存器/结构体
+布局错误不会报错，只会静默地"成功但没数据"。
+
+#### 验证
+
+```
+nvme: BAR0 0xfebb0000  VS 0x00010400
+  model QEMU NVMe Ctrl
+  nsid 1  block 512  sectors(512) 32768
+  lba2 head = 0x00 0x10 0x00 0x00  magic 0xef53  (ext2 OK)
+ext2 mounted from the primary IDE disk
+```
+
+`pci` 里对应 `0:4.0 1b36:0010 class 01/08 [NVME]`；`ext2mount` / `ext2ls /` 直接可用。
+写路径用 `build/qemu_m32write.sh` 验：内核里 `ext2create /nvme1.txt hinvme` 之后，
+宿主 `e2fsck -fn` 干净（17→18 files），`debugfs -R "stat /nvme1.txt"` 看到 inode 18、
+size 7。
+
+### USB 键盘：xHCI + HID（M33，已实现）
+
+这是"能不能上真机"的最后一块硬骨头：笔记本没有 PS/2，登录界面要能打字就必须
+自己驱动 xHCI 控制器、枚举 HID 键盘。`drivers/xhci.c` 的做法是一条最短路径：
+
+```
+PCI 0x0C/0x03 -> BAR0 -> 映射 2MB -> 停控制器 -> 复位
+  -> CONFIG / DCBAAP / CRCR -> 事件环 + ERST -> RS=1
+  -> 端口复位 -> Enable Slot -> Address Device(EP0)
+  -> 读设备/配置/字符串/端点描述符 -> SET_CONFIGURATION -> SET_PROTOCOL(boot)
+  -> Configure Endpoint(中断 IN) -> 常驻 4 个 IN 传输
+```
+
+报告处理后接到已有的键盘抽象：`keyboard_feed_char()` / `keyboard_feed_special()`，
+所以登录、行编辑、方向键翻历史全都照旧工作，PS/2 那条路也没动。
+
+#### 踩到的坑（每个都是"不报错、只是不工作"）
+
+1. **runtime 区不是从 +0x00 开始**。第一个 interrupter 寄存器组在 `RTSOFF + 0x20`：
+   `+0x00` 是 MFINDEX，`IMAN` 在 `+0x20`，`ERSTSZ` 在 `+0x28`，`ERSTBA` 在 `+0x30`，
+   `ERDP` 在 `+0x38`。按 +0x00 写会把 `ERSTSZ` 写进 MFINDEX，事件环永远不登记，
+   所有命令超时（`err=07`）。
+2. **Address Device 之前必须先 Enable Slot**（命令 type 9），slot id 取命令完成
+   事件的 `DW3[31:24]`；`DCBAA[slot]` 也要等拿到 slot 之后再填。否则控制器回
+   `CC_SLOT_NOT_ENABLED_ERROR`。
+3. **Endpoint Context 的字段布局**：`EP Type` 在 `DW1` 的 **bits 5:3**（3 位编码，
+   Control=4、Interrupt IN=7），`CErr` 在 `bits 2:1`，`MaxPacketSize` 在
+   `DW4 bits 31:16`（低 16 位是 Average TRB Length），`Interval` 在 `DW0 bits 23:16`。
+   第一版把 `EP Type` 写成 `7 << 18`、MPS 放进 DW4 低位，控制器直接判
+   `unimplemented endpoint type (0x0)`。
+4. **Link TRB 的 cycle 位不能事后改写**。环末的 Link 带 `TC=1`，控制器跳到环首
+   时会自己翻转 cycle；软件绕回时只翻自己的 cycle、绝不去改 Link。改早了（控制器
+   正读到一半）就会"敲十几个键之后整条通路彻底静默"。
+5. **多个 IN 传输别共用一块报告缓冲**。3 个传输共用一个 8 字节缓冲时，一次轮询
+   里批处理好几条事件，全都读到最新那份报告，中间的按键就被覆盖丢了。改成每个
+   槽位独立缓冲、按事件里的 TRB 地址反查槽位。
+6. **一次只挂 1 个传输会丢键**。shell 刚启动那几毫秒很忙，键盘状态被设备合并，
+   3 个字符只到 1 个。最后定为常驻 4 个传输：忙的时候也有坑位接住报告。
+
+走到环尾（255 个键左右）不玩 cycle 技巧，而是重新 `Configure Endpoint` 拿一个
+干净的新环，代价只是每 255 个键多发一条命令。
+
+#### 验证
+
+`build/qemu_m33.sh`：`-device qemu-xhci` + `-device usb-kbd`，登录 root/zh 后跑 `usb`，
+再输入 `abcdef` 回车、按上方向键调历史、再跑一次 `usb`：
+
+```
+[USB] xHCI keyboard up
+usb: BAR0 0xfebb0000  ports 8  slots 64
+  port speed 3  slot 1  HID ep 0x81
+  reports 19  last key usage 0x28
+  ring enq 23  pending 4  evt deq 12
+```
+
+第二次 `usb` 里 reports 从 19 涨到 47，说明 10 次按键（含回车与方向键）全部送达。
+长串输入用 `build/qemu_m33ovl.sh` 压 22 个字母，`abcdefghijklmnopqrstuv` 一个不少。
+
+### 真机分辨率：GRUB 菜单 + 软件字体缩放（M34，已实现）
+
+真机上 `res` 三个模式全被拒，原因不是"这个模式不支持"，而是**接口不存在**：
+`res` 用的是 Bochs VBE 扩展（dispi）私有寄存器（端口 `0x1CE/0x1CF`，先验 `0xB0C0:0xB0C5`），
+那是 QEMU/Bochs 虚拟显卡的东西，真机 Intel 核显上没有这套寄存器，所以连 `1024x768`
+都会被拒。而 `ExitBootServices` 之后内核也调不到 GOP 的 `SetMode`，**真机上改分辨率
+只能由 GRUB 在启动那一刻完成**。
+
+做法一：**每个目标分辨率编一个内核变体**。
+
+`boot.asm` 的 Multiboot2 帧缓冲请求标签（type 5）支持用 `-DFB_W/-DFB_H/-DFB_D` 写死宽高深，
+`build.sh` 据此多编三个内核：
+
+| 内核 | 头里请求的模式 |
+| --- | --- |
+| `zh_OS_fb.elf` | 不指定（`0/0/0`，交给 GRUB 挑，通常是固件原生） |
+| `zh_OS_fb1200.elf` | 1920x1200x32 |
+| `zh_OS_fb800.elf` | 1280x800x32 |
+| `zh_OS_fb768.elf` | 1024x768x32 |
+
+GRUB 菜单里选中哪一档，就加载哪个 ELF，内核拿到的就是那一档几何。
+
+> 踩坑：在菜单项里写 `set gfxpayload=1920x1200x32` **是没用的**。只要内核头里带帧缓冲
+> 请求标签，GRUB 就按"请求里写的宽高"去要模式，`gfxpayload` 被静默忽略 —— 实测选了
+> 1920x1200 那一项，内核仍然报 `1280x800x32`。改 `gfxmode` 也没用（它只改 gfxterm 自己的
+> 显示，payload 照样被请求标签接管）。所以只能走"一个模式一个内核"。
+
+做法二：**软件字体缩放 `fontscale`**（推荐，真机上唯一有把握的一条）。
+
+真机 2880x1800 面板、8x16 字体 = 360x112 格，字只有屏宽的 1/360，看着很小。
+`fontscale 2` 把每个字模像素画成 2x2 的块，格子变 16x32，立刻变成 180x56 格；
+`fontscale 3` 是 120x37 格。纯软件，不动显卡模式，任何固件都能用。
+
+实测（QEMU）：
+
+```
+[zh@zh_OS ~]$ videomode
+framebuffer 1024x768x32  pitch 4096
+text grid 128x48 cells (8x16 font)
+[zh@zh_OS ~]$ fontscale 2
+fontscale 2  grid 50x18 cells          # 800x600 屏上（M34 首测）
+```
+
+#### 量一量：`memtype` / `bench`（M34）
+
+- `memtype`：打印 `MTRRdefType` 和每一条 variable MTRR（base / size / type），最后一行报
+  "帧缓冲有多少字节被 WC 的 MTRR 盖住"。**0 就是没盖上，说明固件压了一条 UC 的 MTRR 在上面**，
+  这时页表里的 PAT=WC 会被"最严格类型胜出"吃掉。
+- `bench`：整屏写一遍 32 位字，用 `RDTSC` 数周期，输出 `cycles/byte`。
+  `3 左右` = WC 生效；`> 50` = 还是不可缓存。QEMU 里这个数是内存速度，不代表真机。
+
+#### 题外：真机上撞到的两个坑（M34 修正）
+
+1. **UEFI 报 `file '/boot/zh_OS_fb800.elf' not found`**：EFI 侧走
+   `grub-mkstandalone` 生成的 BOOTX64.EFI，内核是从 **memdisk** 里取的，不扫 ISO9660；
+   而 memdisk 的参数里只塞了 `zh_OS_fb.elf` 和默认内核。已补上三个变体
+   （`-o BOOTX64.EFI` 后跟 `"boot/<name>=<elf>"`），BOOTX64.EFI 由 5.1MB 涨到 6.2MB，
+   12MB 的 `efi.img` 仍然放得下。QEMU/OVMF 选 "1280x800x32" 实测拿到
+   `framebuffer 1280x800x32 pitch 5120 / text grid 160x50 cells`。
+2. **`fontscale 2` 之后 `help` 慢到一行一行蹦**：帧缓冲默认按 UC（不可缓存）访问，
+   2880x1800x32 一屏约 20MB，每次滚屏都要按字节搬 20MB → 每换行几百毫秒。三处一起改：
+   - `kernel/paging.c` 新增 `paging_map_2mb_range_type(phys, bytes, wc)`：`wc=1` 时先把
+     IA32_PAT（MSR `0x277`）的 **PA4 从默认 WB 改成 WC**（注意 PA4 编码在 bit 35:32，
+     即 EDX 低 4 位，不是 EAX），再给 2MB 大页置 PAT 位（bit 12）。写了 CPUID.01H:EDX[16]
+     的 PAT 支持检查，避免老 CPU 上 `wrmsr` 报 #GP。
+   - `drivers/fb.c` 的 `put_pixel`（32bpp）改成单次 32 位写；`fill_rect` 走 32bpp 行内
+     连续写；`draw_cell` 32bpp 每行只算一次行指针，缩放时把字模像素展开成连续字。
+   - `fb_scroll` 由逐字节改成 8 字节一次。
+   `fb_init` / `fb_set_mode` 的映射调用都换成 `wc=1` 版本。
+
+### 真机还差什么（现状）
+
+| 项 | 状态 |
+| --- | --- |
+| UEFI 启动 | 已实现，OVMF 实测到登录界面 |
+| PCI 枚举 | 已实现 |
+| SATA（AHCI）读写 | 已实现，QEMU 实测 |
+| NVMe | 已实现，QEMU 实测读 + 写 |
+| USB 键盘（xHCI + HID） | 已实现，QEMU 实测登录/输入/方向键；真机 xHCI 控制器已识别（`0:13.0` / `0:13.2`，BAR0 `0x19400000`），未插键盘时 `usb` 报 err 5 = 端口无设备，属正常
+| 运行时改分辨率（`res`） | **真机不可用**：Bochs VBE dispi 私有接口不存在，改用 GRUB 分辨率菜单项 + `fontscale`（M34）
+| 软件字体缩放（`fontscale`） | 已实现，QEMU 实测（`grid 50x18`）
+| ACPI 关机/重启 | **未实现** |
+
 ## 八、实现说明（摘要）
 
 - **引导**：Multiboot2 要求 bootloader 以 32 位保护模式跳入内核。`boot/boot.asm` 先建
@@ -2416,7 +2866,7 @@ text grid   240x67 cells (8x16 font)
 | `drivers/ata.c` `ata.h` | ATA PIO 读写扇区、主/从盘探测、`diskinfo` |
 | `users/users.c` `login.c` | 内存态账户表、FNV-1a 哈希、登录界面与 3 次失败重来 |
 | `users/users_persist.c` | 账户表序列化到 LBA 200-207（8 扇区 / 4KB） |
-| `shell/shell.c` `commands.c` | 彩色提示符、统一输出宏、45 条命令表 |
+| `shell/shell.c` `commands.c` | 彩色提示符、统一输出宏、64 条命令表 |
 | `shell/cmd_ramfs.c` | `ls/cd/pwd/cat/mkdir/touch/rm`（ramfs） |
 | `shell/cmd_disk.c` | `diskinfo`（ATA 磁盘与持久化扇区） |
 | `shell/cmd_fat.c` | `fatmount/fatls/fatcat`（FAT16 只读） |
@@ -2439,4 +2889,4 @@ text grid   240x67 cells (8x16 font)
 | `build.sh` / `setup.sh` / `check.sh` | 构建 ISO / 配置环境 / 环境体检 |
 | `linker.ld` | 段布局与 0x100000 加载地址 |
 
-所有源码文件顶部都有标准文件头注释（文件名、版本 `0.2beta`、功能简述）。
+所有源码文件顶部都有标准文件头注释（文件名、版本 `1.0`、功能简述）。

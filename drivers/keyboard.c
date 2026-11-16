@@ -1,7 +1,7 @@
 /* ============================================================================
- * zh_OS 0.2beta (x86_64)
+ * zh_OS 1.0 (x86_64)
  * File:    drivers/keyboard.c
- * Version: 0.2beta
+ * Version: 1.0
  * Brief:   PS/2 键盘 IRQ1 驱动：扫描码映射与 256 字节环形缓冲。
  * ============================================================================ */
 
@@ -9,6 +9,7 @@
 
 #include <stdbool.h>  // [ADD]
 #include "pic.h"
+#include "xhci.h"   /* [ADD] M33：USB HID 键盘轮询 */
 
 /*
  * PS/2 键盘驱动（扫描码集 1）
@@ -218,15 +219,42 @@ void keyboard_handle_irq(void)
     buffer_push(ch);
 }
 
+/* [ADD] M33：USB HID 键盘的字符入口。复用同一个缓冲，PS/2 与 USB 可同时工作。 */
+void keyboard_feed_char(char ch)
+{
+    buffer_push(ch);
+}
+
+/* [ADD] M33：USB 方向键入口，直接进特殊键缓冲（控制台历史用） */
+void keyboard_feed_special(uint8_t scancode)
+{
+    keyboard_push_special(scancode);
+}
+
+/* [ADD] M33：USB 侧的 Ctrl-C / Ctrl-Z */
+void keyboard_feed_ctrl_c(void)
+{
+    ctrl_c_flag = 1;
+}
+
+void keyboard_feed_ctrl_z(void)
+{
+    ctrl_z_flag = 1;
+}
+
 char keyboard_getchar(void)
 {
     char ch = 0;
 
     for (;;) {
+        /* [ADD] M33：没有 PS/2 中断时，靠这里轮询 USB 键盘的端点环 */
+        usb_kbd_poll();
         if (buffer_pop(&ch)) {
             return ch;
         }
-        /* 缓冲区为空：开中断并 hlt，等下一次 IRQ 唤醒（不忙等） */
+        /* 缓冲区为空：开中断并 hlt，等下一次 IRQ 唤醒（不忙等）。
+         * PIT（IRQ0，100Hz）会周期性把 CPU 唤醒，于是即使只有一个 USB 键盘，
+         * 上面的轮询也会每 10ms 跑一次。 */
         __asm__ volatile("sti; hlt");
     }
 }
@@ -249,6 +277,8 @@ int keyboard_take_ctrl_z(void)
 
 int keyboard_haschar(void)
 {
+    /* [ADD] M33：先看看 USB 端点有没有新报告 */
+    usb_kbd_poll();
     return buffer_tail != buffer_head;
 }
 

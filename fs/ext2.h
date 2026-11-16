@@ -122,6 +122,25 @@ int ext2_create_big(const char *path, const uint8_t *data, uint64_t len,
 /* [ADD] M22 的命令 */
 int cmd_ext2fill(int argc, char **argv);
 
+/* [ADD] M28：二级/三级间接块 —— 单文件上限从 268KB 变成 ~16GB */
+typedef void (*ext2_fill_fn)(uint64_t off, uint8_t *buf, uint32_t n, void *ctx);
+
+/* 流式建大文件：每写一个数据块就回调一次 gen(off, buf, n, ctx) 填内容，
+ * 不要求调用方先把整份数据放进内存。out_ptrs 是这次新分配了几个指针块，
+ * out_i1/i2/i3 是三级指针树里各自首次用到的那块（没用到就是 0）。 */
+int ext2_create_stream(const char *path, uint64_t len, ext2_fill_fn gen, void *ctx,
+                       uint32_t *out_ino, uint32_t *out_blocks,
+                       uint32_t *out_ptrs, uint32_t *out_i1,
+                       uint32_t *out_i2, uint32_t *out_i3);
+
+/* [ADD] M28：按偏移读（能直接读大文件的尾巴，不用整份装内存） */
+int ext2_read_at(const char *path, uint64_t off, uint8_t *buf, uint64_t maxlen,
+                 uint64_t *outlen);
+
+/* [ADD] M28 的命令 */
+int cmd_ext2big(int argc, char **argv);
+int cmd_ext2tail(int argc, char **argv);
+
 /* [ADD] M23：删文件（释放数据块 -> 清 inode -> 摘目录项） */
 int ext2_unlink(const char *path, uint32_t *out_ino, uint32_t *out_freed);
 

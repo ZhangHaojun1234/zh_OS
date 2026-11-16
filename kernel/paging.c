@@ -1,7 +1,7 @@
 /* ============================================================================
- * zh_OS 0.2beta (x86_64)
+ * zh_OS 1.0 (x86_64)
  * File:    kernel/paging.c
- * Version: 0.2beta
+ * Version: 1.0
  * Brief:   重建 4 级页表、2MB 大页恒等映射低 1GB 并加载 CR3。
  * ============================================================================ */
 
@@ -120,6 +120,38 @@ static void invlpg_one(uint64_t va)
 
 int paging_map_2mb_range(uint64_t phys, uint64_t bytes)
 {
+    return paging_map_2mb_range_type(phys, bytes, 0);
+}
+
+/* [ADD] M34：帧缓冲专用映射 —— 把这一段设成 write-combining（PAT 索引 4）。
+ *
+ * 为什么必须：真机 2880x1800x32 一屏约 20MB，滚屏一次就要拷 20MB。如果这块内存
+ * 按默认 UC（不可缓存）走，每次写都是一次慢速总线事务，实测"每个字都要等"、
+ * 打一次 help 能卡十几秒。设成 WC 之后 CPU 会把连续写合并成突发，速度差几十倍。
+ * 做法：IA32_PAT 的 PA4 由默认 WB 改成 WC(1)，再给 2MB 大页置 PAT 位（bit 12）。
+ */
+#define MSR_IA32_PAT 0x277ull
+#define PAGE_PAT      (1ull << 12)
+
+static void enable_pat_wc4(void)
+{
+    uint32_t a, b, c, d;
+    uint32_t lo, hi;
+
+    /* 先确认 CPU 支持 PAT（CPUID.01H:EDX[16]），否则 wrmsr 0x277 会 #GP */
+    __asm__ volatile("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d) : "a"(1u), "c"(0u));
+    if ((d & (1u << 16)) == 0u) {
+        return;
+    }
+    __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"((uint32_t)MSR_IA32_PAT));
+    /* PA4 的编码在 bit 35:32 —— 也就是 EDX 的低 4 位，不是 EAX！
+     * 默认 PA4 是 0（WB），改成 1 就是 WC。 */
+    hi = (hi & ~0x0000000Fu) | 0x1u;
+    __asm__ volatile("wrmsr" : : "a"(lo), "d"(hi), "c"((uint32_t)MSR_IA32_PAT));
+}
+
+int paging_map_2mb_range_type(uint64_t phys, uint64_t bytes, int wc)
+{
     uint64_t start = phys & ~(PAGE_2MB - 1ull);
     uint64_t end = phys + bytes - 1ull;
     uint64_t addr;
@@ -137,6 +169,10 @@ int paging_map_2mb_range(uint64_t phys, uint64_t bytes)
     }
     pdpt_ptr = (uint64_t *)(uintptr_t)(pml4[0] & PHYS_ADDR_MASK);
 
+    if (wc) {
+        enable_pat_wc4();
+    }
+
     for (addr = start; addr <= end; addr += PAGE_2MB) {
         uint32_t i3 = (uint32_t)((addr >> 30) & 511ull);
         uint32_t i2 = (uint32_t)((addr >> 21) & 511ull);
@@ -151,8 +187,12 @@ int paging_map_2mb_range(uint64_t phys, uint64_t bytes)
             pdpt_ptr[i3] = (uint64_t)(uintptr_t)pd_ptr | PAGE_PRESENT | PAGE_WRITABLE;
         }
         pd_ptr = (uint64_t *)(uintptr_t)(pdpt_ptr[i3] & PHYS_ADDR_MASK);
-        if ((pd_ptr[i2] & PAGE_PRESENT) == 0ull) {
-            pd_ptr[i2] = (addr & ~(PAGE_2MB - 1ull)) | PAGE_PRESENT | PAGE_WRITABLE | PAGE_HUGE;
+        if ((pd_ptr[i2] & PAGE_PRESENT) == 0ull || wc) {
+            uint64_t flags = PAGE_PRESENT | PAGE_WRITABLE | PAGE_HUGE;
+            if (wc) {
+                flags |= PAGE_PAT;     /* 大页的 bit 12 = PAT，指向 PA4=WC */
+            }
+            pd_ptr[i2] = (addr & ~(PAGE_2MB - 1ull)) | flags;
         }
         invlpg_one(addr);
         if (addr >= (0xFFFFFFFFull - PAGE_2MB)) {

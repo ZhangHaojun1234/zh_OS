@@ -1,7 +1,7 @@
 /* ============================================================================
- * zh_OS 0.2beta (x86_64)
+ * zh_OS 1.0 (x86_64)
  * File:    drivers/keyboard.h
- * Version: 0.2beta
+ * Version: 1.0
  * Brief:   键盘驱动接口声明。
  * ============================================================================ */
 
@@ -21,6 +21,13 @@ char keyboard_getchar(void);
 
 /* 非阻塞探测：缓冲区有字符返回 1。 */
 int keyboard_haschar(void);
+
+/* [ADD] M33：USB HID 键盘用。xhci 驱动解析出字符后从这里入队，
+ * 走的还是同一个环形缓冲，上层 ring3 shell 完全察觉不到换了一个键盘。 */
+void keyboard_feed_char(char ch);
+void keyboard_feed_special(uint8_t scancode);
+void keyboard_feed_ctrl_c(void);
+void keyboard_feed_ctrl_z(void);
 
 /* [ADD] M17：刚刚有没有按 Ctrl-C（读后清零）。非阻塞，给 isr 的 IRQ1 用。 */
 int keyboard_take_ctrl_c(void);

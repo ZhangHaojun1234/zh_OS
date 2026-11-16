@@ -1,7 +1,7 @@
 /* ============================================================================
- * zh_OS 0.2beta (x86_64)
+ * zh_OS 1.0 (x86_64)
  * File:    shell/cmd_fd.c
- * Version: 0.2beta
+ * Version: 1.0
  * Brief:   M9 `fd` 命令：按路径装载 /bin/fddemo.elf，用户态自己 open/read/close。
  *
  * 与 M8 的 `elf exec` 一样，程序不是内核里的 blob，而是 ramfs 里的文件；

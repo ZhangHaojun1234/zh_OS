@@ -1,7 +1,7 @@
 /* ============================================================================
- * zh_OS 0.2beta (x86_64)
+ * zh_OS 1.0 (x86_64)
  * File:    drivers/fb.c
- * Version: 0.2beta
+ * Version: 1.0
  * Brief:   线性帧缓冲文字控制台，[ADD] M25。
  *
  * 三件事：
@@ -13,7 +13,11 @@
 #include <stdint.h>
 #include "fb.h"
 #include "font8x16.h"
+#include "mtrr.h"
 #include "../kernel/paging.h"
+
+/* [ADD] M34：帧缓冲实际拿到的 WC 覆盖字节数（0 = MTRR 没插上，仍是 UC） */
+static uint64_t g_wc_bytes = 0ull;
 
 /* Multiboot2 标签类型 */
 #define MB2_TAG_END        0u
@@ -30,6 +34,14 @@ static uint32_t g_cols = 0u, g_rows = 0u;
 static uint32_t g_cx = 0u, g_cy = 0u;
 static uint32_t g_fg = 0xC8C8C8u, g_bg = 0x000000u;
 
+/* [ADD] M34：字体缩放倍数。真机 2880x1800 面板下 res 用不了（Bochs dispi 不存在），
+ * 唯一能让字变大的办法是把 8x16 字模按 NxN 像素块画出来。格子变成 8N x 16N，
+ * 行列数按新格子算，逻辑上等价于"分辨率降 N 倍"。 */
+static uint32_t g_scale = 1u;
+
+static uint32_t cell_w(void) { return FONT_W * g_scale; }
+static uint32_t cell_h(void) { return FONT_H * g_scale; }
+
 /* [ADD] M26：整屏字符缓冲。
  *
  * 为什么必须有：换分辨率以前的实现是"直接往帧缓冲画像素"，屏幕上的字就是像素本身，
@@ -37,11 +49,11 @@ static uint32_t g_fg = 0xC8C8C8u, g_bg = 0x000000u;
  * Linux 的 fbcon 能重绘，是因为它上面还有一层 vc（virtual console）保存着字符。
  *
  * 这里存的就是那一层：每个格子记 字符 + 前景/背景调色板号（各 1 字节，不存 RGB，
- * 省空间也省得换色时失真）。320x100 是上限（2560x1600 的 8x16 网格正好这么密），
+ * 省空间也省得换色时失真）。480x160 是上限（3840x2160 的 8x16 网格正好这么密），
  * 实际只用能看见的 g_rows/g_cols。
  */
-#define FB_BUF_COLS 320u
-#define FB_BUF_ROWS 100u
+#define FB_BUF_COLS 480u   /* [ADD] M29：真机 2880x1800 = 360x112，留到 3840x2160 */
+#define FB_BUF_ROWS 160u
 
 struct fb_cell {
     uint8_t ch;
@@ -90,10 +102,8 @@ static void put_pixel(uint32_t x, uint32_t y, uint32_t rgb)
     uint8_t *p = g_base + (uint64_t)y * g_pitch + (uint64_t)x * (g_bpp / 8u);
 
     if (g_bpp == 32u) {
-        p[0] = (uint8_t)(rgb & 0xFFu);
-        p[1] = (uint8_t)((rgb >> 8) & 0xFFu);
-        p[2] = (uint8_t)((rgb >> 16) & 0xFFu);
-        p[3] = 0u;
+        /* [ADD] M34：一次 32 位写，别拆成 4 次字节写 */
+        *(volatile uint32_t *)p = rgb;
     } else if (g_bpp == 24u) {
         p[0] = (uint8_t)(rgb & 0xFFu);
         p[1] = (uint8_t)((rgb >> 8) & 0xFFu);
@@ -108,15 +118,33 @@ static void put_pixel(uint32_t x, uint32_t y, uint32_t rgb)
     }
 }
 
-/* 一个 8x16 格子刷成单一颜色（滚屏/清屏用） */
-static void fill_cell(uint32_t cx, uint32_t cy, uint32_t rgb)
+/* 一个矩形刷成单一颜色（缩放后一个字/一个像素块都是矩形） */
+static void fill_rect(uint32_t x0, uint32_t y0, uint32_t w, uint32_t h, uint32_t rgb)
 {
     uint32_t x, y;
-    for (y = 0u; y < FONT_H; ++y) {
-        for (x = 0u; x < FONT_W; ++x) {
-            put_pixel(cx * FONT_W + x, cy * FONT_H + y, rgb);
+
+    if (g_bpp == 32u) {
+        /* [ADD] M34：32bpp 走 32 位写 + 同色行内复用，比逐像素算指针快得多 */
+        for (y = 0u; y < h; ++y) {
+            volatile uint32_t *row =
+                (volatile uint32_t *)(g_base + (uint64_t)(y0 + y) * g_pitch) + x0;
+            for (x = 0u; x < w; ++x) {
+                row[x] = rgb;
+            }
+        }
+        return;
+    }
+    for (y = 0u; y < h; ++y) {
+        for (x = 0u; x < w; ++x) {
+            put_pixel(x0 + x, y0 + y, rgb);
         }
     }
+}
+
+/* 一个格子刷成单一颜色（滚屏/清屏用） */
+static void fill_cell(uint32_t cx, uint32_t cy, uint32_t rgb)
+{
+    fill_rect(cx * cell_w(), cy * cell_h(), cell_w(), cell_h(), rgb);
 }
 
 static void fill_all(uint32_t rgb)
@@ -173,10 +201,42 @@ static void draw_cell(uint32_t cx, uint32_t cy)
         fill_cell(cx, cy, bg);
         return;
     }
+    /* [ADD] M34：32bpp 快路径 —— 每行只算一次行指针，行内连续写；
+     * 缩放时把每个字模像素展开成 g_scale 个连续字。 */
+    if (g_bpp == 32u) {
+        uint32_t x0 = cx * cell_w();
+        for (y = 0u; y < FONT_H; ++y) {
+            bits = g_font8x16[cell->ch - FONT_FIRST][y];
+            if (g_scale == 1u) {
+                volatile uint32_t *row =
+                    (volatile uint32_t *)(g_base + (uint64_t)(cy * cell_h() + y) * g_pitch) + x0;
+                for (x = 0u; x < FONT_W; ++x) {
+                    row[x] = (bits & (0x80u >> x)) ? fg : bg;
+                }
+            } else {
+                uint32_t dy, dx;
+                for (dy = 0u; dy < g_scale; ++dy) {
+                    volatile uint32_t *row =
+                        (volatile uint32_t *)(g_base +
+                            (uint64_t)(cy * cell_h() + y * g_scale + dy) * g_pitch) + x0;
+                    for (x = 0u; x < FONT_W; ++x) {
+                        uint32_t c = (bits & (0x80u >> x)) ? fg : bg;
+                        for (dx = 0u; dx < g_scale; ++dx) {
+                            row[x * g_scale + dx] = c;
+                        }
+                    }
+                }
+            }
+        }
+        return;
+    }
     for (y = 0u; y < FONT_H; ++y) {
         bits = g_font8x16[cell->ch - FONT_FIRST][y];
         for (x = 0u; x < FONT_W; ++x) {
-            put_pixel(cx * FONT_W + x, cy * FONT_H + y,
+            /* [ADD] M34：一位字模放大成 g_scale x g_scale 的像素块 */
+            fill_rect(cx * cell_w() + x * g_scale,
+                      cy * cell_h() + y * g_scale,
+                      g_scale, g_scale,
                       (bits & (0x80u >> x)) ? fg : bg);
         }
     }
@@ -248,13 +308,16 @@ int fb_init(uint32_t mb2_info)
         return 0;
     }
     /* 帧缓冲常在 0xFD000000（PCI 空洞里，超过恒等映射的 1GB），必须显式映射 */
-    if (!paging_map_2mb_range((uint64_t)g_phys, (uint64_t)g_pitch * g_h)) {
+    if (!paging_map_2mb_range_type((uint64_t)g_phys, (uint64_t)g_pitch * g_h, 1)) {
         g_active = 0;
         return 0;
     }
     g_base = (uint8_t *)(uintptr_t)g_phys;
-    g_cols = g_w / FONT_W;
-    g_rows = g_h / FONT_H;
+    /* [ADD] M34：页表的 PAT 只在一半 —— MTRR 里若有 UC 项压着，WC 就失效。
+     * 这里再拿一条 MTRR 把整段显式标成 WC，真机宽度 2880 时差别是几十倍。 */
+    g_wc_bytes = mtrr_wc_range((uint64_t)g_phys, (uint64_t)g_pitch * g_h);
+    g_cols = g_w / cell_w();
+    g_rows = g_h / cell_h();
     if (g_cols == 0u || g_rows == 0u) {
         g_active = 0;
         return 0;
@@ -293,12 +356,16 @@ void fb_clear(enum vga_color fg, enum vga_color bg)
 void fb_scroll(void)
 {
     uint8_t *dst = g_base;
-    uint8_t *src = g_base + (uint64_t)FONT_H * g_pitch;
-    uint64_t bytes = (uint64_t)g_pitch * (g_h - FONT_H);
+    uint8_t *src = g_base + (uint64_t)cell_h() * g_pitch;
+    uint64_t bytes = (uint64_t)g_pitch * (g_h - cell_h());
     uint32_t x, y;
     uint64_t i;
 
-    for (i = 0u; i < bytes; ++i) {
+    for (i = 0u; i + 8u <= bytes; i += 8u) {
+        /* [ADD] M34：8 字节一次拷贝 —— 大分辨率下一屏 20MB，按字节搬太慢 */
+        *(uint64_t *)(void *)(dst + i) = *(uint64_t *)(void *)(src + i);
+    }
+    for (; i < bytes; ++i) {
         dst[i] = src[i];
     }
     /* [ADD] M26：缓冲也要跟着上滚一行，否则重绘时会错一行 */
@@ -448,7 +515,7 @@ int fb_set_mode(uint32_t w, uint32_t h, uint32_t bpp)
     if (bpp != 32u && bpp != 24u && bpp != 16u) {
         return 0;
     }
-    if (w == 0u || h == 0u || w > 2560u || h > 1600u) {
+    if (w == 0u || h == 0u || w > 3840u || h > 2160u) {   /* [ADD] M29：真机 2880x1800 */
         return 0;
     }
 
@@ -460,8 +527,8 @@ int fb_set_mode(uint32_t w, uint32_t h, uint32_t bpp)
      *
      * paging_map_2mb_range 对已经映射过的 2MB 页只是覆盖重写同一项，不会重复吃 pd_pool，
      * 所以放大/缩小分辨率都可以反复调用。 */
-    if (!paging_map_2mb_range((uint64_t)g_phys,
-                              (uint64_t)w * (uint64_t)(bpp / 8u) * (uint64_t)h)) {
+    if (!paging_map_2mb_range_type((uint64_t)g_phys,
+                                   (uint64_t)w * (uint64_t)(bpp / 8u) * (uint64_t)h, 1)) {
         return 0;
     }
 
@@ -479,8 +546,8 @@ int fb_set_mode(uint32_t w, uint32_t h, uint32_t bpp)
     g_h = h;
     g_bpp = bpp;
     g_pitch = w * (bpp / 8u);
-    g_cols = g_w / FONT_W;
-    g_rows = g_h / FONT_H;
+    g_cols = g_w / cell_w();
+    g_rows = g_h / cell_h();
     g_cx = 0u;
     g_cy = 0u;
     /* 模式刚切完，显示管线还在按旧跨距扫，立刻重画会留下上一屏的残影；
@@ -587,5 +654,156 @@ int cmd_res(int argc, char **argv)
     }
     /* [ADD] M26：换模式后按字符缓冲整屏重绘，旧内容接在保留的历史行后面 */
     cmd_videomode(0, 0);
+    return 0;
+}
+
+/* ================================================================== */
+/* [ADD] M34：字体缩放 —— 真机唯一可用的"放大字"手段                  */
+/*                                                                    */
+/* 真机 Intel 核显没有 Bochs dispi 那套寄存器，res 必然被拒；而        */
+/* ExitBootServices 之后内核也调不到 GOP 的 SetMode。所以分辨率只能靠  */
+/* GRUB 启动时定。定了之后如果还是嫌字小（2880x1800 面板 360x112 格）， */
+/* 就只能在软件层把字模放大：8x16 的每一位画成 NxN 像素块，格子变      */
+/* 8Nx16N，行列数相应减少 —— 等效于把"逻辑分辨率"降低 N 倍。           */
+/* ================================================================== */
+
+uint32_t fb_scale(void)
+{
+    return g_scale;
+}
+
+int fb_set_scale(uint32_t s)
+{
+    uint32_t nc, nr;
+
+    if (!g_active || s < 1u || s > 4u) {
+        return 0;
+    }
+    if (s == g_scale) {
+        return 1;
+    }
+    nc = g_w / (FONT_W * s);
+    nr = g_h / (FONT_H * s);
+    if (nc == 0u || nr == 0u || nc > FB_BUF_COLS || nr > FB_BUF_ROWS) {
+        return 0;                        /* 这个倍数在这块屏上放不下 */
+    }
+    g_scale = s;
+    g_cols = nc;
+    g_rows = nr;
+    g_cx = 0u;
+    g_cy = 0u;
+    g_used_rows = 0u;
+    buf_clear();
+    fill_all(g_bg);
+    return 1;
+}
+
+int cmd_fontscale(int argc, char **argv)
+{
+    uint32_t s = 0u;
+    const char *p;
+
+    if (argc < 2) {
+        if (!fb_active()) {
+            vga_print("fontscale: no framebuffer (text mode has a fixed 8x16 font)\n",
+                      VGA_LIGHT_RED, VGA_BLACK);
+        } else {
+            vga_print("usage: fontscale <1..4>   current ", VGA_LIGHT_RED, VGA_BLACK);
+            put_u32(fb_scale());
+            vga_putchar('\n', VGA_LIGHT_RED, VGA_BLACK);
+        }
+        return 0;
+    }
+    for (p = argv[1]; *p >= '0' && *p <= '9'; ++p) {
+        s = s * 10u + (uint32_t)(*p - '0');
+    }
+    if (!fb_active()) {
+        vga_print("fontscale: no framebuffer, this kernel is in text mode\n",
+                  VGA_LIGHT_RED, VGA_BLACK);
+        return 0;
+    }
+    if (!fb_set_scale(s)) {
+        vga_print("fontscale: cannot use ", VGA_LIGHT_RED, VGA_BLACK);
+        put_u32(s);
+        vga_print(" on this screen (1..4, must fit)\n", VGA_LIGHT_RED, VGA_BLACK);
+        return 0;
+    }
+    vga_print("fontscale ", VGA_LIGHT_GREEN, VGA_BLACK);
+    put_u32(fb_scale());
+    vga_print("  grid ", VGA_LIGHT_GREEN, VGA_BLACK);
+    put_u32(fb_cols());
+    vga_putchar('x', VGA_LIGHT_GREEN, VGA_BLACK);
+    put_u32(fb_rows());
+    vga_print(" cells\n", VGA_LIGHT_GREEN, VGA_BLACK);
+    return 0;
+}
+
+uint64_t fb_wc_bytes(void)
+{
+    return g_wc_bytes;
+}
+
+/* [ADD] M34：`bench` —— 往显存里成片写 32 位字，用 RDTSC 数周期。
+ * 判断 WC 是否生效看 cycles/byte：WC 大约 1~3，UC 会到几十上百。 */
+int cmd_bench(int argc, char **argv)
+{
+    volatile uint32_t *p;
+    uint64_t bytes, words, i, t0, t1, cycles, per_byte_x100;
+    uint32_t lo, hi;
+
+    if (!fb_active()) {
+        vga_print("bench: no framebuffer\n", VGA_LIGHT_RED, VGA_BLACK);
+        return 0;
+    }
+    bytes = (uint64_t)g_pitch * (uint64_t)g_h;
+    words = bytes / 4ull;
+    p = (volatile uint32_t *)(void *)g_base;
+
+    __asm__ volatile("mfence" : : : "memory");
+    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+    t0 = ((uint64_t)hi << 32) | (uint64_t)lo;
+    for (i = 0ull; i < words; ++i) {
+        p[i] = 0x00336699u;
+    }
+    __asm__ volatile("mfence" : : : "memory");
+    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+    t1 = ((uint64_t)hi << 32) | (uint64_t)lo;
+    cycles = t1 - t0;
+    per_byte_x100 = (bytes != 0ull) ? (cycles * 100ull / bytes) : 0ull;
+
+    vga_print("bench: wrote ", VGA_LIGHT_GREEN, VGA_BLACK);
+    put_u32((uint32_t)(bytes >> 10));
+    vga_print(" KB to the framebuffer in ", VGA_LIGHT_GREEN, VGA_BLACK);
+    put_u32((uint32_t)(cycles >> 10));
+    vga_print("K cycles -> ", VGA_LIGHT_GREEN, VGA_BLACK);
+    put_u32((uint32_t)(per_byte_x100 / 100ull));
+    vga_putchar('.', VGA_LIGHT_GREEN, VGA_BLACK);
+    put_u32((uint32_t)(per_byte_x100 % 100ull));
+    vga_print(" cycles/byte   WC bytes ", VGA_LIGHT_GREEN, VGA_BLACK);
+    put_u32((uint32_t)(g_wc_bytes >> 10));
+    vga_print(" KB\n", VGA_LIGHT_GREEN, VGA_BLACK);
+    vga_print("  (<10 = write-combining is on;  >50 = still uncached)\n",
+              VGA_LIGHT_GREY, VGA_BLACK);
+
+    fb_redraw();
+    return 0;
+}
+
+int cmd_memtype(int argc, char **argv)
+{
+    (void)argc;
+    (void)argv;
+    mtrr_dump();
+    vga_print("fb: phys ", VGA_LIGHT_CYAN, VGA_BLACK);
+    put_u32(g_phys);
+    vga_print("  WC-covered ", VGA_LIGHT_CYAN, VGA_BLACK);
+    put_u32((uint32_t)(g_wc_bytes >> 10));
+    vga_print(" KB of ", VGA_LIGHT_CYAN, VGA_BLACK);
+    put_u32((uint32_t)(((uint64_t)g_pitch * g_h) >> 10));
+    vga_print(" KB\n", VGA_LIGHT_CYAN, VGA_BLACK);
+    if (g_wc_bytes == 0ull) {
+        vga_print("  ! no WC MTRR was installed — framebuffer writes stay uncached\n",
+                  VGA_YELLOW, VGA_BLACK);
+    }
     return 0;
 }

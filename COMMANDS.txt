@@ -1,10 +1,10 @@
 ================================================================================
- zh_OS 0.2beta (x86_64) 命令说明
+ zh_OS 1.0 (x86_64) 命令说明
 ================================================================================
  文件   : COMMANDS.txt
- 版本   : 0.2beta
+ 版本   : 1.0
  适用范围: 内置 Shell 命令速查 + 构建/运行命令
- 命令来源: shell/commands.c 的 shell_command_table（当前共 29 条）
+ 命令来源: shell/commands.c 的 shell_command_table（当前共 67 条）
  说明   : 本文件只是文档，不参与编译；改动源码后仍须重新执行 ./build.sh
 ================================================================================
 
@@ -35,14 +35,14 @@
  密码输入回显 * ，不显示明文。
 
 
-二、内置命令速查表（58 条）
+二、内置命令速查表（60 条）
 --------------------------------------------------------------------------------
  序号  命令       参数              权限        作用
  ----  ---------  ----------------  ----------  ------------------------------
   1    help                       所有用户    彩色列出全部命令与说明
   2    clear                      所有用户    清屏
   3    echo       [args...]       所有用户    绿输出参数（空格连接）
-  4    uname                      所有用户    输出 zh_OS 0.2beta (x86_64)
+  4    uname                      所有用户    输出 zh_OS 1.0 (x86_64)
   5    whoami                     所有用户    输出当前用户名
   6    login                      所有用户    在当前 Shell 内重新登录
   7    logout                     所有用户    退出 Shell 回到登录界面
@@ -99,11 +99,22 @@
  54    ext2free                  所有用户    打印 ext2 空闲块 / 空闲 inode 计数（M21）
  55    ext2fill   <path> <KB>     所有用户    写 >12KB 文件，用上一级间接块（M22）
  56    ext2rm     <path>          所有用户    删文件：释放块 + inode + 目录项（M23）
+ 57    ext2big    <path> [KB]     所有用户    写 >268KB 文件：二级/三级间接块（M28）
+ 58    ext2tail   <path> [bytes]  所有用户    读大文件尾巴：按偏移查指针树（M28）
+ ----  存储与总线（M30 / M31 / M32 / M33）----
+
+  59    pci                    所有用户    枚举 PCI 设备（0xCF8/0xCFC 配置空间）（M30）
+  60    ahci                   所有用户    AHCI 控制器/端口状态 + 读 LBA2 校验 ext2（M31）
+  61    nvme                   所有用户    NVMe 控制器/命名空间 + 读 LBA2 校验 ext2（M32）
+  62    usb                    所有用户    xHCI 控制器 + HID 键盘状态与报告计数（M33）
+
  ----  显示与分辨率（M25）----
 
-  57    videomode                 所有用户    报当前帧缓冲几何 / 文本行列
+  63    videomode              所有用户    报当前帧缓冲几何 / 文本行列（M25）
+  64    res        <W>x<H> [bpp]  所有用户    运行时改分辨率（Bochs VBE dispi）
+65    fontscale  <1..4>        所有用户    把 8x16 字模放大 1..4 倍（真机高 DPI 面板用，M34）
+
 三、命令详解
-  58    res        <W>x<H> [bpp]  所有用户    运行时改分辨率（Bochs VBE dispi）
 --------------------------------------------------------------------------------
 [1] help
     遍历 shell_command_table 打印命令名 + 英文说明，命令名绿、说明浅灰，
@@ -116,7 +127,7 @@
     把参数用单个空格连接后以绿输出；不带参数只输出一个空行。
 
 [4] uname
-    输出统一版本号字符串 "zh_OS 0.2beta (x86_64)"（亮绿）。
+    输出统一版本号字符串 "zh_OS 1.0 (x86_64)"（亮绿）。
     该字符串来自 kernel/version.h，启动横幅 / 登录横幅 / GRUB 菜单同源。
 
 [5] whoami
@@ -605,6 +616,37 @@
     权限不足 -> 亮红 "Permission denied."
 
 
+[64] usb
+    打印 xHCI 控制器与 HID 键盘的状态：
+      BAR0 / ports / slots   —— 控制器寄存器基址与能力（HCSPARAMS1）
+      port speed / slot / HID ep —— 键盘所在端口速度、分配的 slot、HID 端点地址
+      reports / last key usage   —— 累计收到的 HID 报告数、最近一次的 usage id
+      ring enq / pending / evt deq —— 中断端点环的入队下标、在途传输数、事件环消费下标
+    键盘没起来时打印最后一条错误码（xhci_last_error 取负），便于定位卡在哪一步。
+
+[65] fontscale <1..4>
+----------------------------------------
+把 8x16 点阵字模按 NxN 像素块画出来，格子变成 8N x 16N，行列数相应减少。
+典型场景：真机 2880x1800 面板上 8x16 的字只有 1/360 屏宽，看不清。
+
+  fontscale      不带参数：报当前倍数与用法
+  fontscale 2    字大一倍（2880x1800 -> 180x56 格）
+  fontscale 3    字大三倍（-> 120x37 格）
+
+注意：这是纯软件放大，不碰显卡模式，所以任何机器、任何固件都能用；
+切换会清屏（字符缓冲已按新几何重建）。它和 res 是两回事：
+  res       改硬件模式（只有 QEMU/Bochs 的 VBE dispi 支持，真机必被拒）
+  fontscale 改放大倍数（纯软件，到处都能用）
+
+[66] memtype
+    打印 MTRR 布局：MTRRdefType、每条 variable MTRR 的 base/size/type，
+    以及帧缓冲里有多少字节被 WC 的 MTRR 覆盖。0 = 没覆盖上，
+    说明固件有一条 UC 的 MTRR 压在帧缓冲上，PAT 的 WC 会失效。
+
+[67] bench
+    整屏写一遍 32 位字并用 RDTSC 计时，输出 cycles/byte。
+    3 左右 = write-combining 生效；> 50 = 仍按不可缓存访问。
+
 四、构建与运行命令（WSL2 Ubuntu，不生成任何 .bat）
 --------------------------------------------------------------------------------
  在 Windows 11 以管理员身份打开 PowerShell，只做一次:
@@ -614,20 +656,20 @@
    cd ~/zh_OS
    ./setup.sh                 # 首次：安装依赖并写入 env.mode
    ./check.sh                 # 只读体检：打印 gcc/nasm/grub-mkrescue/xorriso/qemu 版本
-   ./build.sh                 # 编译内核并用 grub-mkrescue 生成 zh_OS-0.2beta.iso
+   ./build.sh                 # 编译内核并用 grub-mkrescue 生成 zh_OS-1.0.iso
 
  三种启动方式（按需选择）:
    # 1) 最小启动：无磁盘，账户走内存态
-   qemu-system-x86_64 -cdrom zh_OS-0.2beta.iso -m 128
+   qemu-system-x86_64 -cdrom zh_OS-1.0.iso -m 128
 
    # 2) 用户表持久化：再挂一块可写磁盘
    dd if=/dev/zero of=disk.img bs=1M count=16
-   qemu-system-x86_64 -cdrom zh_OS-0.2beta.iso \
+   qemu-system-x86_64 -cdrom zh_OS-1.0.iso \
      -drive file=disk.img,format=raw,if=ide -m 128
 
    # 3) 再加一块 FAT16 数据盘（主通道从盘 index=1）
    ./build/mkfat16_img.sh      # 生成 32MB data.img，含 hello.txt / zh.txt / sub/
-   qemu-system-x86_64 -cdrom zh_OS-0.2beta.iso \
+   qemu-system-x86_64 -cdrom zh_OS-1.0.iso \
      -drive file=disk.img,format=raw,if=ide \
      -drive file=data.img,format=raw,if=ide,index=1 -m 128
 
@@ -635,7 +677,7 @@
    strings build/zh_OS.elf | grep -E 'Welcome back|built-in commands|fat16 mounted|ATA primary'
 
  把 ISO 复制到 Windows 桌面（供 VirtualBox / VMware 使用）:
-   cp zh_OS-0.2beta.iso /mnt/c/Users/你的用户名/Desktop/
+   cp zh_OS-1.0.iso /mnt/c/Users/你的用户名/Desktop/
 
  可选编译开关:
    ZH_VGA_SELFTEST=1 ./build.sh    # 编入启动时的 16 色前景自检（默认关闭）
@@ -1077,7 +1119,7 @@
         -> M23 PASS: unlink freed the data blocks, the pointer block and the inode
   最硬的判据：e2fsck -fn 回到 "17/4096 files, 1201/16384 blocks"，与造镜像时完全一致。
 
-[57] videomode（M25：看看内核拿到了什么屏）
+[62] videomode（M25：看看内核拿到了什么屏）
 --------------------------------------------------------------------------------
   作用：把 Multiboot2 帧缓冲标签（type 8）的信息报出来，顺便算一遍文本行列。
         没有图形模式时红字提示 "text mode 80x25 (no framebuffer from GRUB)"。
@@ -1089,7 +1131,7 @@
   为什么行列是算出来的：图形模式下没有 0xB8000 那套字符发生器，字是内核用
   8x16 点阵字体一个个像素画上去的。列 = 宽/8，行 = 高/16，换分辨率会自动变。
 
-[58] res <W>x<H> [bpp]（M25：运行时改分辨率）
+[63] res <W>x<H> [bpp]（M25：运行时改分辨率）
 --------------------------------------------------------------------------------
   作用：长模式下已经调不到 int 10h（BIOS 中断只在实模式有），所以直接写
         Bochs VBE dispi 寄存器组（端口 0x1CE 索引 / 0x1CF 数据）改模式：
@@ -1102,6 +1144,25 @@
     res 1024x768        32bpp（默认）
     res 800x600 24      指定色深
     res 1280x720
+
+[59] pci（M30：把 0xCF8/0xCFC 后面的设备都念一遍）
+   用法：pci
+   走 PCI 配置空间的老机制：往 0xCF8 写 (bus<<16)|(slot<<11)|(func<<8)|off，
+   再读 0xCFC 取 32 位。扫描 bus0 的 32 个 slot，header_type bit7 置位的
+   多功能设备再把 func1..7 扫一遍。每条打印 bus:slot.func、vendor:device、
+   class/subclass，并在 class 01/06 后面标 [AHCI]、01/01 后面标 [IDE]。
+   这台机器该输出 8086:2922 class 01/06 [AHCI]（QEMU 的 ich9-ahci）。
+
+[60] ahci（M31：控制器、端口，以及一次真实的扇区读）
+   用法：ahci
+   打印 ABAR / CAP / 端口实现位图 PI，以及选中的 active port 与 PxSIG
+   （0x00000101 = SATA 硬盘）。然后读 LBA2 —— ext2 超级块所在扇区，
+   打印前 4 字节与偏移 56 处的 magic：0xEF53 说明整条 DMA 通路是对的。
+   控制器没起来时改打诊断：ABAR/CAP/PI 加每个端口的 SIG/SSTS/CMD。
+
+   M31 之后 ata_read_sector / ata_write_sector / ata_disk_present 都优先走
+   AHCI，所以 ext2mount、ext2ls、ext2create 这些命令在 SATA 盘上照常可用。
+
 
   预期输出（成功时立刻重报几何）：
     framebuffer 1024x768x32  pitch 4096
@@ -1133,3 +1194,48 @@
         screendump 的 PPM 尺寸依次是 1280x800 / 1024x768 / 800x600
 
 ================================================================================
+
+[61] nvme（M32：环形队列里的 PCIe SSD）
+   用法：nvme
+   打印 BAR0、控制器版本 VS、型号字符串、命名空间号、逻辑块大小、总扇区数，
+   然后读 LBA2 —— ext2 超级块所在扇区，magic（偏移 56）应为 0xEF53。
+
+   NVMe 与 AHCI 的结构差别：
+     - 命令是环形队列里的 64 字节项，写进 SQ 后敲 SQ 门铃（BAR0 + 0x1000）；
+     - 控制器把 16 字节的完成项写进 CQ，靠完成项里的 phase 位判断"有没有新的"，
+       每绕队列一圈 phase 翻转一次；
+     - 数据地址在 DW6（PRP1），不是 DW12 —— 写错位置会被当成 0，
+       控制器立刻报"成功"但一个字节都不搬（M32 踩过这个坑）。
+
+   M32 之后 ata_read_sector / ata_write_sector / ata_disk_present 的优先级是
+   NVMe > AHCI > IDE PIO，所以 ext2mount、ext2ls、ext2create 在 NVMe 盘上照常可用。
+
+[57] ext2big <path> [KB]（M28：写 >268KB 的文件，用上二级间接块）
+--------------------------------------------------------------------------------
+  用法：ext2big /big2m.txt 2048      KB 默认 1024，上限 4096
+  干什么：分配 inode -> 按块回调生成内容 -> 每块走 ext2_map_add 找物理块。
+        12 个直接块用完之后进 i_block[12]（一级间接）；
+        268KB 之后进 i_block[13]（二级间接：指针块 -> 指针块 -> 数据块）；
+        64MB 之后进 i_block[14]（三级间接）。
+  打印：wrote <path>  inode N  X bytes  D data blocks  P pointer block(s)
+          indirect: i_block[12]=#a  i_block[13]=#b  i_block[14]=#c
+        没用到的那层打 #0。
+
+  内容：每 64 字节一行、行首带序号，末尾 18 字节固定写 END-OF-HUGE-WRITE!，
+        这串必然落在 268KB 之后，只有二级间接块写对了才读得出来。
+
+  失败：写一半出错（盘满 / I/O 错）会 map_rollback()，把已分配的块、
+        三层指针树和 inode 全放掉，不留"位图标着已用但没人引用"的块。
+  错误：   no space left on the device      KB 超过 4096 或盘真的满了
+            file exists                     同名文件已存在
+
+[58] ext2tail <path> [bytes]（M28：读大文件的尾巴，验证读路径）
+--------------------------------------------------------------------------------
+  用法：ext2tail /cat2m.txt 200      bytes 默认 128，上限 512
+  干什么：off = size - bytes，然后 ext2_read_at 按逻辑块跳着读。
+        map_lookup 只查指针树、不分配（≈ Linux ext2_bmap），
+        所以 2MB 文件也不用整份装进内存就能读到尾巴。
+  打印：ext2tail: <path> (size N, from offset M)  然后是被读出来的那段字节，
+        不可打印字符打成 '.'。
+  典型：ext2big 写出来的文件末尾有 END-OF-HUGE-WRITE!，
+        ext2tail 能把它读出来 == 二级间接块的读路径通了。

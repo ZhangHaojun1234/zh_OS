@@ -1,7 +1,7 @@
 ; ============================================================================
-; zh_OS 0.2beta (x86_64)
+; zh_OS 1.0 (x86_64)
 ; File:    boot/boot.asm
-; Version: 0.2beta
+; Version: 1.0
 ; Brief:   Multiboot2 头、32->64 位两段式引导入口、临时页表与 16KB 栈。
 ; ============================================================================
 
@@ -39,14 +39,30 @@ align 8
 ; 连 gfxpayload=text 也挡不住；所以要保留"纯文本模式"这一个退路，必须用两个内核：
 ;   zh_OS.elf    不带此标签 -> 文本模式（老的分等效验证脚本都靠读 0xB8000）
 ;   zh_OS_fb.elf 带此标签   -> 图形模式（res 命令在这边才有意义）
+; [ADD] M34：宽/高/色深可以用 -DFB_W/-DFB_H/-DFB_D 指定。
+; GRUB 只按"头里写的需求"挑模式，实测 gfxpayload 在 framebuffer 请求标签存在时
+; 会被忽略（写了 1920x1200x32 仍给 1280x800），所以真机想换分辨率就得编出
+; 一个"明确要求某个模式"的内核，用菜单项去选。
 %ifdef FB_REQUEST
 align 8
     dw 5                        ; 帧缓冲标签
     dw 0                        ; flags
     dd 20                       ; size
+%ifdef FB_W
+    dd FB_W                     ; width
+%else
     dd 0                        ; width  = 0：不指定
+%endif
+%ifdef FB_H
+    dd FB_H                     ; height
+%else
     dd 0                        ; height = 0：不指定
+%endif
+%ifdef FB_D
+    dd FB_D                     ; depth
+%else
     dd 0                        ; depth  = 0：不指定
+%endif
 %endif
 align 8
     dw 0                        ; 结束标签 type = 0

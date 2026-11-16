@@ -1,7 +1,7 @@
 /* ============================================================================
- * zh_OS 0.2beta (x86_64)
+ * zh_OS 1.0 (x86_64)
  * File:    kernel/kernel.c
- * Version: 0.2beta
+ * Version: 1.0
  * Brief:   内核主入口：初始化各子系统，最后进入登录 + Shell 循环。
  * ============================================================================ */
 
@@ -26,6 +26,9 @@
 #include "../mm/phys.h"  // [ADD]  M3 物理内存：Multiboot2 内存图 + 页帧位图分配器
 #include "fb.h"  // [ADD] M25：Multiboot2 帧缓冲（图形模式 + 点阵字体）
 #include "ata.h"  // [ADD]  B 组第 2 个功能：ATA PIO 驱动
+#include "ahci.h"  // [ADD] M31：AHCI（SATA）
+#include "nvme.h"  // [ADD] M32：NVMe（PCIe SSD）
+#include "xhci.h"  // [ADD] M33：USB（xHCI + HID 键盘）
 #include "users_persist.h"  // [ADD]  B 组第 2 个功能：用户表持久化
 // [ADD] 本文件已有 static klog(enum log_level,...)，不能包含 klog.h，改用别名声明
 extern void klog_init(void); // [ADD]
@@ -106,7 +109,7 @@ static void klog(enum log_level level, const char *message)
 /* 首行 banner，格式参考 Linux 的 "Linux version ..." 行 */
 static void print_banner(void)
 {
-    /* 首行以统一版本号开头：zh_OS 0.2beta (x86_64) */
+    /* 首行以统一版本号开头：zh_OS 1.0 (x86_64) */
     vga_print(ZH_OS_VERSION_TEXT " (", VGA_WHITE, VGA_BLACK);
 #if defined(__clang__)
     vga_print("clang ", VGA_WHITE, VGA_BLACK);
@@ -260,6 +263,29 @@ void kernel_main(uint32_t mb2_magic, uint32_t mb2_info)
      * 返回，这里重新进入登录流程。shutdown 命令直接停机，不会回到这里。
      */
     /* B 组第 2 个功能：启动期做一次磁盘检测 + 用户表载入（仅一次）。 */
+    /* [ADD] M31：先找 AHCI 控制器。找得到，后面 ata_* 就都转给 AHCI；
+     * 找不到（老机器 IDE / QEMU 默认 IDE）就还是走 PIO。 */
+    // [ADD] M32：NVMe 先试。真机（笔记本）的 SSD 基本都挂在 NVMe 上，
+    // AHCI 只在老 SATA 盘上有用；两个都失败才退回 IDE PIO。
+    if (nvme_init() == 0) {
+        vga_print("[NVME] PCIe SSD up: ", VGA_BLUE, VGA_BLACK);
+        vga_print(nvme_model(), VGA_BLUE, VGA_BLACK);
+        vga_print("\n", VGA_BLUE, VGA_BLACK);
+    } else {
+        vga_print("[NVME] no NVMe controller\n", VGA_DARK_GREY, VGA_BLACK);
+    }
+    // [ADD] M33：USB 键盘。笔记本没有 PS/2，这一步是"能敲字"的前提。
+    if (xhci_init() == 0) {
+        vga_print("[USB] xHCI keyboard up\n", VGA_BLUE, VGA_BLACK);
+    } else {
+        vga_print("[USB] no xHCI keyboard (PS/2 only)\n", VGA_DARK_GREY, VGA_BLACK);
+    }
+    if (ahci_init() == 0) {
+        vga_print("[AHCI] SATA controller up\n", VGA_BLUE, VGA_BLACK);
+    } else {
+        vga_print("[AHCI] no SATA controller, falling back to IDE PIO\n",
+                  VGA_BLUE, VGA_BLACK);
+    }
     ata_init(); // [ADD] 检测主通道是否有硬盘；缓存"磁盘是否存在"标记
     users_load(); // [ADD] 从 LBA 200 尝试载入持久化账户表，失败静默保留默认
     if (ata_disk_present()) { // [ADD] 蓝字日志：有磁盘

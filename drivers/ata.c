@@ -1,7 +1,7 @@
 /* ============================================================================
- * zh_OS 0.2beta (x86_64)
+ * zh_OS 1.0 (x86_64)
  * File:    drivers/ata.c
- * Version: 0.2beta
+ * Version: 1.0
  * Brief:   ATA PIO 驱动（LBA28 / 主通道 0x1F0），最简同步实现。
  *
  * B 组第 2 个功能（ATA PIO + 用户表持久化）的纯增量新增文件。
@@ -16,6 +16,8 @@
  * ============================================================================ */
 
 #include "ata.h"
+#include "ahci.h"   /* [ADD] M31：AHCI 后端 */
+#include "nvme.h"   /* [ADD] M32：NVMe 后端 */
 
 /* 真正的不带延时的原始 inb（供延时函数自身使用，避免递归）。 */
 static inline uint8_t ata_inb_raw(uint16_t port)
@@ -131,6 +133,14 @@ int ata_init(void)
 
 int ata_disk_present(void)
 {
+    /* [ADD] M31/M32：NVMe 或 AHCI 上挂着盘也算"有盘"。上层只认这一句，
+     * 所以只要有一边能用，它们就照常跑。 */
+    if (nvme_ready()) {
+        return 1;
+    }
+    if (ahci_ready()) {
+        return 1;
+    }
     return g_ata_present;
 }
 
@@ -138,6 +148,14 @@ int ata_read_sector(uint32_t lba, uint8_t *buf)
 {
     if (buf == 0) {
         return ATA_EIO;
+    }
+    /* [ADD] M31/M32：先 NVMe、再 AHCI，最后才是 IDE PIO。真机没有 IDE 端口，
+     * 但 ext2 / 用户表这些上层代码不该知道自己踩在什么控制器上。 */
+    if (nvme_ready()) {
+        return nvme_read_sector(lba, buf);
+    }
+    if (ahci_ready()) {
+        return ahci_read_sector(lba, buf);
     }
     if (!g_ata_present) {
         return ATA_ENODEV;
@@ -182,6 +200,13 @@ int ata_read_sector(uint32_t lba, uint8_t *buf)
 
 int ata_write_sector(uint32_t lba, const uint8_t *buf)
 {
+    /* [ADD] M31/M32：写路径同理 */
+    if (nvme_ready()) {
+        return nvme_write_sector(lba, buf);
+    }
+    if (ahci_ready()) {
+        return ahci_write_sector(lba, buf);
+    }
     if (buf == 0) {
         return ATA_EIO;
     }

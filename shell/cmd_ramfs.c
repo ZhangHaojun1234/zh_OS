@@ -1,7 +1,7 @@
 /* ============================================================================
- * zh_OS 0.2beta (x86_64)
+ * zh_OS 1.0 (x86_64)
  * File:    shell/cmd_ramfs.c
- * Version: 0.2beta
+ * Version: 1.0
  * Brief:   基于 ramfs 的 7 个 Shell 命令：ls / cd / pwd / cat / mkdir / touch / rm。
  *
  * B 组第 1 个功能，纯增量「只添加，不修改」：本文件为新文件，命令表在

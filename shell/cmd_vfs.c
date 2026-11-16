@@ -1,7 +1,7 @@
 /* ============================================================================
- * zh_OS 0.2beta (x86_64)
+ * zh_OS 1.0 (x86_64)
  * File:    shell/cmd_vfs.c
- * Version: 0.2beta
+ * Version: 1.0
  * Brief:   VFS 的 3 个 Shell 命令：mount / umount / mounts（M20）。
  *
  * 纯增量：本文件是新文件，命令表在 commands.c 末尾追加。

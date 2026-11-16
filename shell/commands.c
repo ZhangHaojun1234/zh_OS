@@ -1,7 +1,7 @@
 /* ============================================================================
- * zh_OS 0.2beta (x86_64)
+ * zh_OS 1.0 (x86_64)
  * File:    shell/commands.c
- * Version: 0.2beta
+ * Version: 1.0
  * Brief:   13 个内置命令的实现与静态命令表。
  * ============================================================================ */
 
@@ -23,6 +23,7 @@
 #include "../drivers/ata.h"  // [ADD]  B 组第 2 个功能：ATA 驱动 + diskinfo 声明
 #include "../users/users_persist.h"  // [ADD]  B 组第 2 个功能：用户表持久化
 #include "../fs/fat16.h"  // [ADD]  B 组第 3 个功能：FAT16 只读挂载（fatmount/fatls/fatcat）
+#include "cmd_pci.h"     // [ADD] M30/M31：pci / ahci
 #include "../fs/ext2.h"   // [ADD]  M19：ext2 只读挂载（ext2mount/ext2info/ext2ls/ext2cat）
 #include "../fs/vfs.h"
 #include "../drivers/fb.h"   // [ADD] M25：videomode    // [ADD]  M20：挂载表（mount/umount/mounts）
@@ -455,9 +456,18 @@ const shell_command_t shell_command_table[] = {
     { "ext2create", cmd_ext2create, "Create a file on ext2 and write its content to disk (M21)" }, // [ADD] M21
     { "ext2free",   cmd_ext2free,   "Show ext2 free blocks / free inodes from the superblock (M21)" }, // [ADD] M21
     { "ext2fill",   cmd_ext2fill,   "Write a >12KB ext2 file, so the indirect block gets used (M22)" }, // [ADD] M22
+    { "ext2big",    cmd_ext2big,    "Write a >268KB ext2 file, so double+triple indirect blocks get used (M28)" }, // [ADD] M28
+    { "ext2tail",   cmd_ext2tail,   "Read the last bytes of a big ext2 file: walks the indirect tree (M28)" }, // [ADD] M28
+    { "pci",        cmd_pci,        "Enumerate PCI devices via 0xCF8/0xCFC config space (M30)" }, // [ADD] M30
+    { "ahci",       cmd_ahci,       "Show the AHCI controller/port and read LBA0 through DMA (M31)" }, // [ADD] M31
+    { "nvme",       cmd_nvme,       "Show the NVMe controller/namespace and read LBA2 through queues (M32)" }, // [ADD] M32
+    { "usb",        cmd_usb,        "Show the xHCI controller, HID keyboard and report counters (M33)" }, // [ADD] M33
     { "ext2rm",     cmd_ext2rm,     "Delete an ext2 file: free its blocks and its inode (M23)" }, // [ADD] M23
     { "videomode",  cmd_videomode,  "Show the framebuffer geometry the kernel got from GRUB (M25)" }, // [ADD] M25
     { "res",        cmd_res,        "Switch resolution at runtime: res 1024x768 (M25)" },            // [ADD] M25
+    { "fontscale",  cmd_fontscale,  "Scale the 8x16 font 1..4x for high-DPI screens: fontscale 2 (M34)" }, // [ADD] M34
+    { "memtype",    cmd_memtype,    "Dump MTRRdefType and all variable MTRRs; shows how much of the fb is WC (M34)" }, // [ADD] M34
+    { "bench",      cmd_bench,      "Time a full-screen framebuffer write in cycles/byte (<10 = WC on) (M34)" }, // [ADD] M34
 };
 
 const uint32_t shell_command_table_size =

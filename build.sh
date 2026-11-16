@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ============================================================================
-# zh_OS 0.2beta (x86_64)
+# zh_OS 1.0 (x86_64)
 # File:    build.sh
-# Version: 0.2beta
+# Version: 1.0
 # Brief:   一键编译内核并用 grub-mkrescue 生成可启动 ISO。
 # ============================================================================
 
@@ -13,7 +13,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 ENV_MODE_FILE="$ROOT/env.mode"
 TOOLCHAIN_DIR="$ROOT/toolchain"
 TARGET="x86_64-elf"
-VERSION="0.2beta"
+VERSION="1.0"
 ARCH_LABEL="x86_64"
 VERSION_TEXT="zh_OS $VERSION ($ARCH_LABEL)"   # 必须与 kernel/version.h 的 ZH_OS_VERSION_TEXT 一致
 ISO_NAME="zh_OS-$VERSION.iso"
@@ -23,6 +23,11 @@ ELF="$BUILD_DIR/zh_OS.elf"
 KERNEL_NAME_FB="zh_OS_fb.elf"           # [ADD] M25：带帧缓冲请求的同一份内核
 ELF_FB="$BUILD_DIR/$KERNEL_NAME_FB"
 KERNEL_NAME="zh_OS.elf"
+
+# [ADD] M34：真机分辨率变体（各自在 multiboot2 头里请求一个固定模式）
+FB1200_NAME="zh_OS_fb1200.elf"
+FB800_NAME="zh_OS_fb800.elf"
+FB768_NAME="zh_OS_fb768.elf"
 
 CFLAGS=(
   -m64
@@ -90,7 +95,7 @@ usage() {
   读取项目根目录的 env.mode 决定工具链路线：
     system-gcc  使用系统 gcc / ld
     cross       使用 toolchain/bin/x86_64-elf-gcc 与 x86_64-elf-ld
-  产物：zh_OS-0.2beta.iso
+  产物：zh_OS-1.0.iso
 EOF
 }
 
@@ -233,6 +238,33 @@ link_kernel() {
   done
   run_cmd "$LD" -m elf_x86_64 -T "$ROOT/linker.ld" -o "$ELF_FB" "${objs_fb[@]}"
   ok "图形模式内核已生成：$ELF_FB"
+
+  # [ADD] M34：真机改分辨率。GRUB 只认 multiboot2 头里写的帧缓冲请求，
+  # gfxpayload 在带请求标签时会被忽略（实测），所以每个目标分辨率编一个内核，
+  # 菜单里选哪个就加载哪个。
+  link_fb_variant 1920 1200 "$FB1200_NAME"
+  link_fb_variant 1280 800  "$FB800_NAME"
+  link_fb_variant 1024 768  "$FB768_NAME"
+}
+
+# [ADD] M34：编一个"明确请求 WxHx32 帧缓冲"的内核变体。
+link_fb_variant() {
+  local w="$1" h="$2" name="$3" obj
+  local obj_file="$BUILD_DIR/boot_${name}.o"
+  local objs_v=()
+
+  info "生成 $name（${w}x${h}x32）..."
+  run_cmd nasm -f elf64 -DFB_REQUEST -DFB_W="$w" -DFB_H="$h" -DFB_D=32 \
+    "$ROOT/boot/boot.asm" -o "$obj_file"
+  for obj in "${OBJECTS[@]}"; do
+    if [[ "$obj" == "$BUILD_DIR/boot/boot.o" ]]; then
+      objs_v+=("$obj_file")
+    else
+      objs_v+=("$obj")
+    fi
+  done
+  run_cmd "$LD" -m elf_x86_64 -T "$ROOT/linker.ld" -o "$BUILD_DIR/$name" "${objs_v[@]}"
+  ok "已生成：build/$name（${w}x${h}x32）"
 }
 
 # 构建时核对 C 侧与脚本侧的版本字符串，防止只改了一处造成横幅 / uname / 菜单不一致。
@@ -276,6 +308,25 @@ menuentry "$VERSION_TEXT  graphics (framebuffer, res switchable)" {
     multiboot2 /boot/$KERNEL_NAME_FB
     boot
 }
+# [ADD] M34：真机改分辨率。
+#
+# 为什么不在这里写 set gfxmode / set gfxpayload：只要内核的 multiboot2 头里带了
+# 帧缓冲请求标签（type 5），GRUB 就按"请求里写的宽高"去要模式，gfxpayload 会被
+# 忽略（实测：写 1920x1200x32 内核照样拿到 1280x800）。所以每个目标分辨率单独
+# 编一个内核变体（头里写死 1920x1200/1280x800/1024x768 + 32bpp），菜单项直接
+# 加载对应的那个 ELF —— 简单、确定、不依赖 GRUB 的模式选择策略。
+menuentry "$VERSION_TEXT  graphics  1920x1200x32" {
+    multiboot2 /boot/$FB1200_NAME
+    boot
+}
+menuentry "$VERSION_TEXT  graphics  1280x800x32" {
+    multiboot2 /boot/$FB800_NAME
+    boot
+}
+menuentry "$VERSION_TEXT  graphics  1024x768x32" {
+    multiboot2 /boot/$FB768_NAME
+    boot
+}
 EOF
 }
 
@@ -285,10 +336,101 @@ build_iso() {
   mkdir -p "$ISO_DIR/boot/grub"
   cp "$ELF" "$ISO_DIR/boot/$KERNEL_NAME"
   cp "$ELF_FB" "$ISO_DIR/boot/$KERNEL_NAME_FB"
+  cp "$BUILD_DIR/$FB1200_NAME" "$ISO_DIR/boot/$FB1200_NAME"
+  cp "$BUILD_DIR/$FB800_NAME"  "$ISO_DIR/boot/$FB800_NAME"
+  cp "$BUILD_DIR/$FB768_NAME"  "$ISO_DIR/boot/$FB768_NAME"
   write_grub_cfg
 
-  info "生成 $ISO_NAME ..."
-  run_cmd grub-mkrescue -o "$ROOT/$ISO_NAME" "$ISO_DIR"
+  build_efi_image
+
+  info "生成 $ISO_NAME（BIOS + UEFI 双启动）..."
+  # [ADD] M29：手工拼 ISO，一张盘同时带 El Torito(BIOS) 与 El Torito(EFI)。
+  # grub-mkrescue 只会按本机装的平台出图，这里两个都自己装。
+  mkdir -p "$ISO_DIR/boot/grub/i386-pc"
+  cp -f /usr/lib/grub/i386-pc/*.mod "$ISO_DIR/boot/grub/i386-pc/" 2>/dev/null || true
+  cp -f /usr/lib/grub/i386-pc/*.lst "$ISO_DIR/boot/grub/i386-pc/" 2>/dev/null || true
+  cp -f /usr/lib/grub/i386-pc/eltorito.img "$ISO_DIR/boot/grub/i386-pc/" 2>/dev/null || true
+  run_cmd xorriso -as mkisofs -quiet -volid ZH_OS -o "$ROOT/$ISO_NAME" \
+    -b boot/grub/i386-pc/eltorito.img -no-emul-boot -boot-load-size 4 \
+    -boot-info-table --grub2-boot-info \
+    --grub2-mbr /usr/lib/grub/i386-pc/boot_hybrid.img \
+    -eltorito-alt-boot -e EFI/efi.img -no-emul-boot \
+    -isohybrid-gpt-basdat \
+    "$ISO_DIR"
+}
+
+# [ADD] M29：UEFI 引导镜像。
+# 思路：BOOTX64.EFI 用 grub-mkstandalone 做成"自带 grub.cfg + 必需模块"的单文件，
+# 塞进一张 8MB 的 FAT 镜像（EFI/efi.img），xorriso 再把它当第二个 El Torito 入口。
+# 这样 BIOS 走 eltorito.img、UEFI 走 BOOTX64.EFI，同一张盘两种固件都能起。
+build_efi_image() {
+  local efi_mods="$ROOT/build/grub-efi"
+  local efi_cfg="$ROOT/build/efi_grub.cfg"
+  local bootx="$ROOT/build/BOOTX64.EFI"
+  local efi_img="$ROOT/build/efi.img"
+
+  if [ ! -d "$efi_mods" ]; then
+    warn "缺少 $efi_mods（x86_64-efi 模块），本次只做 BIOS 引导"
+    warn "修复：bash build/get_grub_efi.sh"
+    mkdir -p "$ISO_DIR/EFI"
+    dd if=/dev/zero of="$ISO_DIR/EFI/efi.img" bs=1M count=1 status=none
+    return 0
+  fi
+
+  info "生成 EFI 引导镜像 ..."
+  write_efi_grub_cfg "$efi_cfg"
+  # 内核也塞进 memdisk：EFI 侧 GRUB 的 iso9660 常常扫不到光驱，
+  # 干脆让它不依赖光驱 —— 镜像本身就是内核的载体。
+  run_cmd grub-mkstandalone -d "$efi_mods" -O x86_64-efi \
+    --fonts="" --locales="" --themes="" \
+    --modules="multiboot2 normal iso9660 part_msdos part_gpt video all_video gfxterm boot" \
+    -o "$bootx" "boot/grub/grub.cfg=$efi_cfg" \
+    "boot/$KERNEL_NAME_FB=$ELF_FB" \
+    "boot/$FB1200_NAME=$BUILD_DIR/$FB1200_NAME" \
+    "boot/$FB800_NAME=$BUILD_DIR/$FB800_NAME" \
+    "boot/$FB768_NAME=$BUILD_DIR/$FB768_NAME" \
+    "boot/$KERNEL_NAME=$ELF"
+
+  rm -f "$efi_img"
+  dd if=/dev/zero of="$efi_img" bs=1M count=12 status=none
+  mformat -i "$efi_img" -M 512 ::
+  mmd -i "$efi_img" ::/EFI ::/EFI/BOOT
+  mcopy -i "$efi_img" "$bootx" ::/EFI/BOOT/BOOTX64.EFI
+  mkdir -p "$ISO_DIR/EFI"
+  cp -f "$efi_img" "$ISO_DIR/EFI/efi.img"
+}
+
+# [ADD] M29：UEFI 下没有 VGA 文本模式，只留图形模式这一项，
+# 并且 gfxmode=auto 让固件挑它自己的原生分辨率（GOP）。
+write_efi_grub_cfg() {
+  local out="$1"
+  cat > "$out" <<EOF
+set timeout=3
+set default=0
+insmod all_video
+insmod gfxterm
+set gfxmode=auto
+terminal_output gfxterm
+set gfxpayload=keep
+set root=(memdisk)
+menuentry "$VERSION_TEXT  UEFI graphics (framebuffer)" {
+    multiboot2 /boot/$KERNEL_NAME_FB
+    boot
+}
+# [ADD] M34：真机（UEFI/GOP）分辨率 —— 同样靠内核变体，理由见 BIOS 那份注释。
+menuentry "$VERSION_TEXT  UEFI graphics  1920x1200x32" {
+    multiboot2 /boot/$FB1200_NAME
+    boot
+}
+menuentry "$VERSION_TEXT  UEFI graphics  1280x800x32" {
+    multiboot2 /boot/$FB800_NAME
+    boot
+}
+menuentry "$VERSION_TEXT  UEFI graphics  1024x768x32" {
+    multiboot2 /boot/$FB768_NAME
+    boot
+}
+EOF
 }
 
 main() {

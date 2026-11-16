@@ -1,7 +1,7 @@
 /* ============================================================================
- * zh_OS 0.2beta (x86_64)
+ * zh_OS 1.0 (x86_64)
  * File:    shell/cmd_argv.c
- * Version: 0.2beta
+ * Version: 1.0
  * Brief:   M11 `argv` 命令：从 ramfs 装载 /bin/argvdemo.elf 并跑起来。
  *
  * 这一步证明的是：argc/argv 能**跨过 exec 边界** —— 父进程 fork 出子进程，

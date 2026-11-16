@@ -1,7 +1,7 @@
 /* ============================================================================
- * zh_OS 0.2beta (x86_64)
+ * zh_OS 1.0 (x86_64)
  * File:    shell/cmd_ext2.c
- * Version: 0.2beta
+ * Version: 1.0
  * Brief:   ext2 只读的 4 个 Shell 命令：ext2mount / ext2info / ext2ls / ext2cat。
  *
  * M19，纯增量「只添加，不修改」：本文件是新文件，命令表在 commands.c 末尾追加。
@@ -413,5 +413,170 @@ int cmd_ext2rm(int argc, char **argv)
     sh_print(SH_OK, "  ");
     sh_print_u32(SH_OK, freed);
     sh_println(SH_OK, " blocks freed");
+    return SHELL_CONTINUE;
+}
+
+/* ------------------------------------------------------------------ */
+/* [ADD] M28：ext2big —— 写一个超过 268KB 的文件（用上二/三级间接块） */
+/* ------------------------------------------------------------------ */
+
+/* 生成内容：每 64 字节一行，行首带序号，末尾那段是校验标记。
+ * 读回来的时候只要看到大小和尾标记，就说明指针树走对了。 */
+static void big_gen(uint64_t off, uint8_t *buf, uint32_t n, void *ctx)
+{
+    uint64_t total = *(uint64_t *)ctx;
+    uint32_t i;
+
+    for (i = 0u; i < n; ++i) {
+        uint64_t pos = off + i;
+        uint32_t col = (uint32_t)(pos % 64u);
+        uint64_t line = pos / 64u;
+
+        if (col < 4u) {
+            buf[i] = (uint8_t)('0' + (uint8_t)((line >> (8u * (3u - col))) & 0xFFu) % 10u);
+        } else if (col == 4u) {
+            buf[i] = ' ';
+        } else if (col == 5u) {
+            buf[i] = '|';
+        } else if (col == 62u) {
+            buf[i] = '|';
+        } else if (col == 63u) {
+            buf[i] = '\n';
+        } else {
+            buf[i] = (uint8_t)('a' + (uint8_t)((line + col) % 26u));
+        }
+    }
+    /* 收尾标记：占最后 18 字节，保证落在文件末尾那一块 */
+    if (total >= 18u && off + n >= total) {
+        const char *m = "END-OF-HUGE-WRITE!";
+        uint32_t mlen = 18u;
+        uint32_t at = (uint32_t)(total - mlen) - (uint32_t)off;
+        for (i = 0u; i < mlen && at + i < n; ++i) {
+            buf[at + i] = (uint8_t)m[i];
+        }
+    }
+}
+
+int cmd_ext2big(int argc, char **argv)
+{
+    uint32_t kb = 1024u;
+    uint64_t len;
+    uint64_t total;
+    uint32_t ino = 0u, blocks = 0u, ptrs = 0u, i1 = 0u, i2 = 0u, i3 = 0u;
+    uint32_t i;
+    int rc;
+
+    if (argc < 2) {
+        err("usage: ext2big <path> [KB]     KB default 1024, max 4096");
+        return SHELL_CONTINUE;
+    }
+    if (argc >= 3) {
+        uint32_t v = 0u;
+        for (i = 0u; argv[2][i] != '\0'; ++i) {
+            if (argv[2][i] < '0' || argv[2][i] > '9') {
+                err("ext2big: KB must be 1..4096");
+                return SHELL_CONTINUE;
+            }
+            v = v * 10u + (uint32_t)(argv[2][i] - '0');
+        }
+        if (v == 0u || v > 4096u) {
+            err("ext2big: KB must be 1..4096");
+            return SHELL_CONTINUE;
+        }
+        kb = v;
+    }
+    len = (uint64_t)kb * 1024u;
+    total = len;
+
+    rc = ext2_create_stream(argv[1], len, big_gen, &total,
+                            &ino, &blocks, &ptrs, &i1, &i2, &i3);
+    if (rc != EXT2_OK) {
+        emit_err_reason("ext2big", rc);
+        return SHELL_CONTINUE;
+    }
+
+    sh_print(SH_OK, "wrote ");
+    sh_print(SH_OK, argv[1]);
+    sh_print(SH_OK, "  inode ");
+    sh_print_u32(SH_OK, ino);
+    sh_print(SH_OK, "  ");
+    sh_print_u32(SH_OK, (uint32_t)len);
+    sh_print(SH_OK, " bytes, ");
+    sh_print_u32(SH_OK, blocks);
+    sh_print(SH_OK, " data blocks, ");
+    sh_print_u32(SH_OK, ptrs);
+    sh_print(SH_OK, " pointer block(s)");
+    sh_newline();
+    sh_print(SH_OK, "  indirect: i_block[12]=#");
+    sh_print_u32(SH_OK, i1);
+    sh_print(SH_OK, "  i_block[13]=#");
+    sh_print_u32(SH_OK, i2);
+    sh_print(SH_OK, "  i_block[14]=#");
+    sh_print_u32(SH_OK, i3);
+    sh_newline();
+    return SHELL_CONTINUE;
+}
+
+/* ------------------------------------------------------------------ */
+/* [ADD] M28：ext2tail —— 读大文件的最后 N 字节，验证二级间接读路径   */
+/* ------------------------------------------------------------------ */
+
+int cmd_ext2tail(int argc, char **argv)
+{
+    static uint8_t buf[512];
+    uint64_t size = 0u, off = 0u, got = 0u, i;
+    uint64_t want = 128u;
+    int rc;
+
+    if (argc < 2) {
+        err("usage: ext2tail <path> [bytes]   (bytes default 128, max 512)");
+        return SHELL_CONTINUE;
+    }
+    if (argc >= 3) {
+        uint32_t v = 0u;
+        for (i = 0u; argv[2][i] != '\0'; ++i) {
+            if (argv[2][i] < '0' || argv[2][i] > '9') {
+                err("ext2tail: bytes must be 1..512");
+                return SHELL_CONTINUE;
+            }
+            v = v * 10u + (uint32_t)(argv[2][i] - '0');
+        }
+        if (v == 0u || v > 512u) {
+            err("ext2tail: bytes must be 1..512");
+            return SHELL_CONTINUE;
+        }
+        want = (uint64_t)v;
+    }
+    rc = ext2_size(argv[1], &size);
+    if (rc != EXT2_OK) {
+        emit_err_reason("ext2tail", rc);
+        return SHELL_CONTINUE;
+    }
+    if (size > want) {
+        off = size - want;
+    }
+    rc = ext2_read_at(argv[1], off, buf, want, &got);
+    if (rc != EXT2_OK) {
+        emit_err_reason("ext2tail", rc);
+        return SHELL_CONTINUE;
+    }
+    sh_print(SH_PLAIN, "ext2tail: ");
+    sh_print(SH_PLAIN, argv[1]);
+    sh_print(SH_PLAIN, " (size ");
+    sh_print_u32(SH_PLAIN, (uint32_t)size);
+    sh_print(SH_PLAIN, ", from offset ");
+    sh_print_u32(SH_PLAIN, (uint32_t)off);
+    sh_println(SH_PLAIN, ")");
+    for (i = 0u; i < got; ++i) {
+        char ch = (char)buf[i];
+        if (ch == '\n') {
+            vga_putchar('\n', VGA_LIGHT_GREY, VGA_BLACK);
+        } else if (ch < 32 || ch > 126) {
+            vga_putchar('.', VGA_LIGHT_GREY, VGA_BLACK);
+        } else {
+            vga_putchar(ch, VGA_LIGHT_GREY, VGA_BLACK);
+        }
+    }
+    vga_putchar('\n', VGA_LIGHT_GREY, VGA_BLACK);
     return SHELL_CONTINUE;
 }

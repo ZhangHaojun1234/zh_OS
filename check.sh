@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ============================================================================
-# zh_OS 0.2beta (x86_64)
+# zh_OS 1.0 (x86_64)
 # File:    check.sh
-# Version: 0.2beta
+# Version: 1.0
 # Brief:   只读环境体检：打印 gcc/nasm/grub-mkrescue/xorriso/qemu 版本与修复建议。
 # ============================================================================
 
@@ -12,7 +12,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 ENV_MODE_FILE="$ROOT/env.mode"
 TOOLCHAIN_DIR="$ROOT/toolchain"
 TARGET="x86_64-elf"
-VERSION_TEXT="zh_OS 0.2beta (x86_64)"   # 与 kernel/version.h 保持一致
+VERSION_TEXT="zh_OS 1.0 (x86_64)"   # 与 kernel/version.h 保持一致
 
 if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
   C_RESET=$'\033[0m'

@@ -1,7 +1,7 @@
 /* ============================================================================
- * zh_OS 0.2beta (x86_64)
+ * zh_OS 1.0 (x86_64)
  * File:    kernel/paging.h
- * Version: 0.2beta
+ * Version: 1.0
  * Brief:   页表接口声明。
  * ============================================================================ */
 
@@ -30,5 +30,9 @@ uint64_t paging_get_cr3(void);
 
 /* [ADD] M25：把物理区间映射成恒等可写（2MB 大页），帧缓冲用 */
 int paging_map_2mb_range(uint64_t phys, uint64_t bytes);
+
+/* [ADD] M34：帧缓冲专用 —— 同时把这段物理内存设成 write-combining。
+ * 真机 2880x1800x32 一屏 20MB，走默认的 UC 会让滚屏/重绘慢到没法用。 */
+int paging_map_2mb_range_type(uint64_t phys, uint64_t bytes, int wc);
 
 #endif /* ZH_OS_PAGING_H */
